@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import deque
+from typing import Deque, Dict
 import numpy as np
 from scipy.stats import norm
 
@@ -19,26 +20,36 @@ class SignalCalibrator:
     ) -> None:
         self.zscore_window = zscore_window
         self.signal_threshold_z = signal_threshold_z
-        self._history = deque(maxlen=zscore_window)
+        self._histories: Dict[str, Deque[float]] = {}
+
+    def reset(self) -> None:
+        self._histories.clear()
 
     def calibrate(
         self,
         raw_pred: float,
         beta_hedge_ratio: float,
+        key: str = "default",
     ) -> tuple[float, float, SignalState, float]:
         """Convert raw predicted residual return into:
-        
+
         Returns:
             (expected_bps, z_score, signal_state, confidence_percentile)
+
+        Each `key` (one per model) keeps its own history, so one model's predictions
+        never shift another model's z-score. The "confidence percentile" is
+        normal_cdf(|z|): how unusual this prediction is versus the model's own recent
+        predictions, not a probability that the trade works.
         """
-        self._history.append(raw_pred)
+        history = self._histories.setdefault(key, deque(maxlen=self.zscore_window))
+        history.append(raw_pred)
         expected_bps = float(raw_pred * 10000.0)
 
-        if len(self._history) < 30:
+        if len(history) < 30:
             # Insufficient calibration history, default to neutral
             return expected_bps, 0.0, SignalState.NEUTRAL, 50.0
 
-        hist_arr = np.array(self._history)
+        hist_arr = np.array(history)
         mean = float(np.mean(hist_arr))
         std = float(np.std(hist_arr))
 

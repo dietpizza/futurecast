@@ -3,1036 +3,239 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>futurecast · Air-Gapped Multi-Model Residual Alpha Terminal</title>
-  <style>
-    :root {
-      --bg-dark: #0b0f17;
-      --bg-card: #111827;
-      --bg-card-hover: #162032;
-      --bg-subrow: #0e1524;
-      --border-color: #1f293d;
-      --border-glow: #2d3b55;
-      --text-main: #f3f4f6;
-      --text-muted: #94a3b8;
-      --text-dim: #64748b;
-      --bullish: #10b981;
-      --bullish-bg: rgba(16, 185, 129, 0.12);
-      --bullish-border: rgba(16, 185, 129, 0.35);
-      --bearish: #f43f5e;
-      --bearish-bg: rgba(244, 63, 94, 0.12);
-      --bearish-border: rgba(244, 63, 94, 0.35);
-      --neutral: #eab308;
-      --neutral-bg: rgba(234, 179, 8, 0.12);
-      --neutral-border: rgba(234, 179, 8, 0.35);
-      --accent: #38bdf8;
-      --accent-bg: rgba(56, 189, 248, 0.12);
-      --purple: #a855f7;
-      --pink: #ec4899;
-    }
-
-    * {
-      box-sizing: border-box;
-      margin: 0;
-      padding: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    }
-
-    body {
-      background-color: var(--bg-dark);
-      color: var(--text-main);
-      padding: 20px 28px;
-      min-height: 100vh;
-    }
-
-    /* Header */
-    header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding-bottom: 18px;
-      border-bottom: 1px solid var(--border-color);
-      margin-bottom: 20px;
-    }
-
-    .brand-section {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-    }
-
-    .logo-badge {
-      font-size: 24px;
-      line-height: 1;
-      background: linear-gradient(135deg, #38bdf8, #818cf8);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      font-weight: 900;
-      letter-spacing: -0.5px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .pulse-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      background-color: var(--bullish);
-      box-shadow: 0 0 10px var(--bullish);
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-      70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
-      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-    }
-
-    .airgap-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      background-color: rgba(16, 185, 129, 0.1);
-      border: 1px solid rgba(16, 185, 129, 0.4);
-      color: #34d399;
-      font-size: 11px;
-      font-weight: 700;
-      padding: 4px 10px;
-      border-radius: 9999px;
-      letter-spacing: 0.5px;
-      text-transform: uppercase;
-    }
-
-    .header-stats {
-      display: flex;
-      align-items: center;
-      gap: 20px;
-      font-size: 13px;
-    }
-
-    .live-clock {
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      color: var(--text-muted);
-      background-color: var(--bg-card);
-      padding: 5px 12px;
-      border-radius: 6px;
-      border: 1px solid var(--border-color);
-    }
-
-    .ws-status {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 12px;
-      font-weight: 600;
-      color: #38bdf8;
-    }
-
-    /* Controls Bar */
-    .controls-panel {
-      background-color: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 10px;
-      padding: 16px 20px;
-      margin-bottom: 24px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
-    }
-
-    .add-coin-form {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-
-    .input-wrapper {
-      position: relative;
-      flex: 1;
-      min-width: 280px;
-    }
-
-    input[type="text"] {
-      width: 100%;
-      background-color: var(--bg-dark);
-      border: 1px solid var(--border-color);
-      color: var(--text-main);
-      padding: 10px 14px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 500;
-      outline: none;
-      transition: border-color 0.15s ease, box-shadow 0.15s ease;
-    }
-
-    input[type="text"]:focus {
-      border-color: var(--accent);
-      box-shadow: 0 0 0 2px var(--accent-bg);
-    }
-
-    button.btn-primary {
-      background: linear-gradient(135deg, #0284c7, #2563eb);
-      color: #ffffff;
-      border: none;
-      padding: 10px 18px;
-      border-radius: 6px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      transition: opacity 0.15s ease, transform 0.05s ease;
-    }
-
-    button.btn-primary:hover {
-      opacity: 0.95;
-    }
-
-    button.btn-primary:active {
-      transform: scale(0.98);
-    }
-
-    .preset-chips {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-
-    .chip-label {
-      font-size: 12px;
-      color: var(--text-dim);
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .chip-btn {
-      background-color: var(--bg-dark);
-      border: 1px solid var(--border-color);
-      color: var(--text-muted);
-      padding: 5px 10px;
-      border-radius: 6px;
-      font-size: 12px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-
-    .chip-btn:hover {
-      border-color: var(--accent);
-      color: var(--text-main);
-      background-color: var(--accent-bg);
-    }
-
-    /* Coins Grouped List */
-    .coins-container {
-      display: flex;
-      flex-direction: column;
-      gap: 20px;
-    }
-
-    /* Coin Card (Big Row) */
-    .coin-section-card {
-      background-color: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: 12px;
-      overflow: hidden;
-      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
-      transition: border-color 0.2s ease;
-    }
-
-    .coin-section-card:hover {
-      border-color: var(--border-glow);
-    }
-
-    /* Card Top Banner */
-    .coin-header-bar {
-      display: grid;
-      grid-template-columns: 2.2fr 1.6fr 1.8fr 1.8fr auto;
-      align-items: center;
-      gap: 16px;
-      padding: 16px 20px;
-      background: linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, rgba(255, 255, 255, 0) 100%);
-      border-bottom: 1px solid var(--border-color);
-    }
-
-    .symbol-info {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .symbol-title-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .symbol-name {
-      font-size: 20px;
-      font-weight: 800;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      letter-spacing: -0.3px;
-    }
-
-    .badge {
-      font-size: 11px;
-      font-weight: 700;
-      padding: 2px 7px;
-      border-radius: 4px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-
-    .badge-exchange {
-      background-color: rgba(99, 102, 241, 0.15);
-      color: #818cf8;
-      border: 1px solid rgba(99, 102, 241, 0.3);
-    }
-
-    .badge-sector {
-      background-color: rgba(236, 72, 153, 0.15);
-      color: #f472b6;
-      border: 1px solid rgba(236, 72, 153, 0.3);
-    }
-
-    .sector-info {
-      font-size: 11px;
-      color: var(--text-dim);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    }
-
-    /* Price info */
-    .price-box {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-    }
-
-    .price-val {
-      font-size: 18px;
-      font-weight: 700;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-variant-numeric: tabular-nums;
-      transition: color 0.3s ease;
-    }
-
-    .price-bench {
-      font-size: 11px;
-      color: var(--text-dim);
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    }
-
-    /* Signal status badge */
-    .signal-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 12px;
-      border-radius: 6px;
-      font-size: 13px;
-      font-weight: 800;
-      letter-spacing: 0.5px;
-      width: fit-content;
-      text-transform: uppercase;
-    }
-
-    .signal-bullish {
-      background-color: var(--bullish-bg);
-      border: 1px solid var(--bullish-border);
-      color: var(--bullish);
-    }
-
-    .signal-bearish {
-      background-color: var(--bearish-bg);
-      border: 1px solid var(--bearish-border);
-      color: var(--bearish);
-    }
-
-    .signal-neutral {
-      background-color: var(--neutral-bg);
-      border: 1px solid var(--neutral-border);
-      color: var(--neutral);
-    }
-
-    /* Concordance Pill */
-    .concordance-box {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-    }
-
-    .concordance-val {
-      font-size: 13px;
-      font-weight: 700;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-
-    .concordance-bar-bg {
-      width: 100%;
-      height: 4px;
-      background-color: var(--bg-dark);
-      border-radius: 2px;
-      overflow: hidden;
-    }
-
-    .concordance-bar-fill {
-      height: 100%;
-      background: linear-gradient(90deg, #10b981, #38bdf8);
-      border-radius: 2px;
-      transition: width 0.3s ease;
-    }
-
-    .btn-remove {
-      background: transparent;
-      border: 1px solid var(--border-color);
-      color: var(--text-dim);
-      width: 32px;
-      height: 32px;
-      border-radius: 6px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 14px;
-      transition: all 0.15s ease;
-    }
-
-    .btn-remove:hover {
-      background-color: var(--bearish-bg);
-      border-color: var(--bearish-border);
-      color: var(--bearish);
-    }
-
-    /* Microstructure Context Strip */
-    .micro-strip {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      padding: 8px 20px;
-      background-color: rgba(14, 21, 36, 0.6);
-      border-bottom: 1px solid var(--border-color);
-      font-size: 12px;
-      color: var(--text-muted);
-      overflow-x: auto;
-    }
-
-    .micro-item {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      white-space: nowrap;
-    }
-
-    .micro-label {
-      color: var(--text-dim);
-      font-size: 11px;
-      text-transform: uppercase;
-      font-weight: 600;
-    }
-
-    .micro-val {
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      color: var(--text-main);
-      font-weight: 600;
-    }
-
-    /* Nested Multi-Model Table */
-    .models-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 13px;
-    }
-
-    .models-table th {
-      text-align: left;
-      padding: 10px 20px;
-      background-color: rgba(11, 15, 23, 0.4);
-      color: var(--text-dim);
-      font-size: 11px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      border-bottom: 1px solid var(--border-color);
-    }
-
-    .models-table td {
-      padding: 12px 20px;
-      border-bottom: 1px solid var(--border-color);
-      vertical-align: middle;
-      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-variant-numeric: tabular-nums;
-    }
-
-    .models-table tr:last-child td {
-      border-bottom: none;
-    }
-
-    .models-table tr:hover td {
-      background-color: rgba(255, 255, 255, 0.02);
-    }
-
-    .consensus-row td {
-      background-color: rgba(56, 189, 248, 0.03);
-      font-weight: 700;
-    }
-
-    .model-name-cell {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      font-weight: 600;
-      color: var(--text-main);
-    }
-
-    .model-icon {
-      font-size: 14px;
-    }
-
-    .alpha-val {
-      font-weight: 700;
-    }
-
-    .val-positive {
-      color: var(--bullish);
-    }
-
-    .val-negative {
-      color: var(--bearish);
-    }
-
-    .val-neutral {
-      color: var(--neutral);
-    }
-
-    .confidence-wrapper {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .confidence-mini-bar {
-      width: 50px;
-      height: 4px;
-      background-color: var(--bg-dark);
-      border-radius: 2px;
-      overflow: hidden;
-    }
-
-    .confidence-fill {
-      height: 100%;
-      background-color: #38bdf8;
-      border-radius: 2px;
-    }
-
-    .status-pill {
-      font-size: 11px;
-      padding: 2px 8px;
-      border-radius: 9999px;
-      font-weight: 700;
-      display: inline-block;
-      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-    }
-
-    .status-verified {
-      background-color: var(--bullish-bg);
-      color: var(--bullish);
-      border: 1px solid var(--bullish-border);
-    }
-
-    .status-divergent {
-      background-color: var(--bearish-bg);
-      color: var(--bearish);
-      border: 1px solid var(--bearish-border);
-    }
-
-    .status-consensus {
-      background-color: var(--accent-bg);
-      color: var(--accent);
-      border: 1px solid rgba(56, 189, 248, 0.35);
-    }
-
-    /* Flash Animations */
-    .flash-green {
-      animation: flashGreen 0.7s ease-out;
-    }
-
-    .flash-red {
-      animation: flashRed 0.7s ease-out;
-    }
-
-    @keyframes flashGreen {
-      0% { color: #10b981; transform: scale(1.04); }
-      100% { color: inherit; transform: scale(1); }
-    }
-
-    @keyframes flashRed {
-      0% { color: #f43f5e; transform: scale(1.04); }
-      100% { color: inherit; transform: scale(1); }
-    }
-
-    /* Empty state */
-    .empty-state {
-      text-align: center;
-      padding: 60px 20px;
-      color: var(--text-dim);
-    }
-
-    .empty-state h3 {
-      font-size: 18px;
-      color: var(--text-muted);
-      margin-bottom: 8px;
-    }
-
-    @media (max-width: 900px) {
-      .coin-header-bar {
-        grid-template-columns: 1fr;
-        gap: 12px;
-      }
-    }
-  </style>
+  <meta name="color-scheme" content="light dark">
+  <title>futurecast · Win Probability Watchlist</title>
+
+  <script>
+    // Apply the saved theme (or the OS preference) before first paint so the page never flashes.
+    (function () {
+      var saved = null;
+      try { saved = localStorage.getItem("fc-theme"); } catch (e) {}
+      var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme = saved === "dark" || saved === "light" ? saved : (prefersDark ? "dark" : "light");
+    })();
+  </script>
+
+  <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="/static/css/tooltips.css">
+  <link rel="stylesheet" href="/static/css/glossary.css">
+  <link rel="stylesheet" href="/static/css/sidebar.css">
 </head>
 <body>
 
-  <!-- Header -->
-  <header>
-    <div class="brand-section">
-      <div class="logo-badge">
-        <span class="pulse-dot"></span>
-        ⚡ futurecast
+  <header class="app-header">
+    <div class="app-header-inner">
+      <div class="header-left">
+        <button class="icon-btn theme-toggle" id="theme-toggle" onclick="toggleTheme()"
+                aria-label="Switch to dark theme" data-tooltip="Switch to dark theme">
+          <svg class="icon icon-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 10.1A5.6 5.6 0 0 1 5.9 2.8a5.6 5.6 0 1 0 7.3 7.3z" /></svg>
+          <svg class="icon icon-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.75" /><path d="M8 1.5v1.25M8 13.25v1.25M1.5 8h1.25M13.25 8h1.25M3.4 3.4l.9.9M11.7 11.7l.9.9M3.4 12.6l.9-.9M11.7 4.3l.9-.9" /></svg>
+        </button>
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true"></span>
+          <span class="brand-name">futurecast</span>
+        </div>
       </div>
-      <div class="airgap-badge">
-        🛡️ AIR-GAPPED FORECASTER · ZERO EXECUTION
+      <div class="header-actions">
+        <div class="ws-status" id="ws-status" data-state="connecting"
+             data-tooltip-title="Live data feed"
+             data-tooltip="Real-time price and order book stream from the exchange.">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="status-text">Connecting</span>
+        </div>
+        <span class="live-clock" id="live-clock">--:--:-- UTC</span>
+        <button class="btn btn-primary sidebar-toggle-btn" onclick="toggleSidebar()" aria-keyshortcuts="/">
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" /></svg>
+          <span class="btn-label">Add pair</span>
+          <kbd class="hotkey-hint">/</kbd>
+        </button>
       </div>
-    </div>
-    <div class="header-stats">
-      <div class="ws-status" id="ws-status">
-        <span style="color:#10b981;">●</span> CONNECTED
-      </div>
-      <div class="live-clock" id="live-clock">--:--:-- UTC</div>
     </div>
   </header>
 
-  <!-- Control & Coin Management Bar -->
-  <section class="controls-panel">
-    <form class="add-coin-form" id="add-coin-form" onsubmit="handleAddCoin(event)">
-      <div class="input-wrapper">
-        <input 
-          type="text" 
-          id="coin-input" 
-          placeholder="Enter symbol (e.g. B-DOGE_USDT, B-SOL_USDT, DOGEUSDT, I-BTC_INR, PEPEUSDT)..." 
-          autocomplete="off"
-        />
+  <main class="page">
+    <div class="toolbar">
+      <div class="toolbar-title">
+        <h1>Watchlist</h1>
+        <p class="toolbar-summary" id="watchlist-summary">Loading…</p>
       </div>
-      <button type="submit" class="btn-primary">
-        <span>+ Add Coin</span>
-      </button>
-    </form>
-
-    <div class="preset-chips">
-      <span class="chip-label">Quick Add Presets:</span>
-      <button class="chip-btn" onclick="quickAdd('B-DOGE_USDT')">+ B-DOGE_USDT (Meme)</button>
-      <button class="chip-btn" onclick="quickAdd('B-SOL_USDT')">+ B-SOL_USDT (L1)</button>
-      <button class="chip-btn" onclick="quickAdd('B-BLUR_USDT')">+ B-BLUR_USDT (NFT)</button>
-      <button class="chip-btn" onclick="quickAdd('B-AVA_USDT')">+ B-AVA_USDT (Thin)</button>
-      <button class="chip-btn" onclick="quickAdd('DOGEUSDT')">+ DOGEUSDT (Binance)</button>
-      <button class="chip-btn" onclick="quickAdd('BTCUSDT')">+ BTCUSDT (Macro)</button>
-      <button class="chip-btn" onclick="quickAdd('PEPEUSDT')">+ PEPEUSDT (Sector)</button>
+      <nav class="segmented" id="timeframe-selector" aria-label="Forecast horizon">
+        <span class="segmented-label"
+              data-tooltip-title="Forecast horizon"
+              data-tooltip="How long a trade is held at most. 5m, 15m and 1h use 5-minute candles; 4h and 8h use 15-minute candles. Each horizon has its own trained models.">Horizon</span>
+        <button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')">5m</button>
+        <button class="tf-btn active" data-tf="15m" onclick="setTimeframe('15m')">15m</button>
+        <button class="tf-btn" data-tf="1h" onclick="setTimeframe('1h')">1h</button>
+        <button class="tf-btn" data-tf="4h" onclick="setTimeframe('4h')">4h</button>
+        <button class="tf-btn" data-tf="8h" onclick="setTimeframe('8h')">8h</button>
+      </nav>
     </div>
-  </section>
 
-  <!-- Grouped Multi-Coin Sections Container -->
-  <main class="coins-container" id="coins-container">
-    <!-- Populated dynamically via JS -->
+    <section class="watchlist" aria-label="Tracked pairs">
+      <div class="list-head" aria-hidden="true">
+        <span class="c-pair">Pair</span>
+        <span class="c-price num">Price</span>
+        <span class="c-signal"><span class="th-help" data-tooltip-title="Trade signal" data-tooltip="Long or Short only when that side's calibrated win probability clears its break-even AND following such signals made money after fees on history the models never saw. Otherwise Neutral.">Signal</span></span>
+        <span class="c-long num"><span class="th-help" data-horizon-label="Long win" data-tooltip-title="Long win probability" data-tooltip="Chance a long entered now hits its take-profit before its stop-loss within the horizon. Calibrated on real past outcomes; 'needs' is the win rate required to break even after fees.">Long win · 15m</span></span>
+        <span class="c-short num"><span class="th-help" data-horizon-label="Short win" data-tooltip-title="Short win probability" data-tooltip="Chance a short entered now hits its take-profit before its stop-loss within the horizon. Calibrated on real past outcomes; 'needs' is the win rate required to break even after fees.">Short win · 15m</span></span>
+        <span class="c-models"><span class="th-help" data-tooltip-title="Model agreement" data-tooltip="One dot per model (LightGBM, XGBoost, CatBoost): green if its own odds clear break-even for a long, red for a short, grey for neither.">Models</span></span>
+        <span class="c-book"><span class="th-help" data-tooltip-title="Order book" data-tooltip="Share of resting limit-order liquidity on the bid (buy) side across the top 20 levels.">Order book</span></span>
+        <span class="c-risk"><span class="th-help" data-tooltip-title="Long / short risk" data-tooltip="Rule-based hazard score (0–100) for opening a long (L) or short (S) right now (overextension, funding, volatility, order book), with a leverage guide. Not a probability.">Risk L / S</span></span>
+        <span class="c-actions"></span>
+      </div>
+      <div class="coins-container" id="coins-container"></div>
+    </section>
   </main>
 
-  <script>
-    // State
-    const coinsData = {};
-    let ws = null;
+  <!-- CoinDCX contract link blueprint -->
+  <template id="coindcx-trade-link-template">
+    <a href="https://coindcx.com/trade/" target="_blank" rel="noopener noreferrer" class="symbol-link">CoinDCX Futures Contract</a>
+  </template>
 
-    // Clock
-    function updateClock() {
-      const now = new Date();
-      document.getElementById("live-clock").textContent = now.toISOString().slice(11, 19) + " UTC";
-    }
-    setInterval(updateClock, 1000);
-    updateClock();
-
-    // WebSocket Management
-    function initWebSocket() {
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
-      ws = new WebSocket(wsUrl);
-
-      ws.onopen = () => {
-        document.getElementById("ws-status").innerHTML = `<span style="color:#10b981;">●</span> LIVE STREAMING`;
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          handleWebSocketMessage(msg);
-        } catch (err) {
-          console.error("WS Parse error:", err);
-        }
-      };
-
-      ws.onclose = () => {
-        document.getElementById("ws-status").innerHTML = `<span style="color:#f43f5e;">●</span> RECONNECTING...`;
-        setTimeout(initWebSocket, 2000);
-      };
-
-      ws.onerror = (err) => {
-        console.error("WS error:", err);
-      };
-    }
-
-    function handleWebSocketMessage(msg) {
-      if (msg.type === "INIT_STATE") {
-        (msg.coins || []).forEach(coin => {
-          coinsData[coin.symbol] = coin;
-        });
-        renderAll();
-      } else if (msg.type === "FORECAST_UPDATE") {
-        const symbol = msg.symbol;
-        if (!coinsData[symbol]) {
-          coinsData[symbol] = { symbol: symbol };
-        }
-        Object.assign(coinsData[symbol], msg);
-        renderCoinCard(symbol, true);
-      } else if (msg.type === "TRAINING_UPDATE") {
-        const symbol = msg.symbol;
-        if (coinsData[symbol]) {
-          coinsData[symbol].training_status = msg.training_status;
-          if (msg.is_custom_trained !== undefined) {
-            coinsData[symbol].is_custom_trained = msg.is_custom_trained;
-          }
-          renderCoinCard(symbol, false);
-        }
-      }
-    }
-
-    // Add / Remove / Train APIs
-    async function handleAddCoin(e) {
-      e.preventDefault();
-      const input = document.getElementById("coin-input");
-      const val = input.value.trim().toUpperCase();
-      if (!val) return;
-      await quickAdd(val);
-      input.value = "";
-    }
-
-    async function quickAdd(symbol) {
-      try {
-        const resp = await fetch("/api/coins", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ symbol: symbol, auto_train: true }),
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          coinsData[data.symbol] = data;
-          renderAll();
-        }
-      } catch (err) {
-        console.error("Failed to add coin:", err);
-      }
-    }
-
-    async function trainCoin(symbol) {
-      if (!coinsData[symbol]) return;
-      coinsData[symbol].training_status = "training";
-      renderCoinCard(symbol, false);
-      try {
-        await fetch(`/api/coins/${encodeURIComponent(symbol)}/train`, { method: "POST" });
-      } catch (err) {
-        console.error("Failed to train coin:", err);
-      }
-    }
-
-    async function removeCoin(symbol) {
-      try {
-        await fetch(`/api/coins/${encodeURIComponent(symbol)}`, { method: "DELETE" });
-        delete coinsData[symbol];
-        renderAll();
-      } catch (err) {
-        console.error("Failed to remove coin:", err);
-      }
-    }
-
-    // Render Helpers
-    function getSignalBadge(signal, alphaBps) {
-      const sig = (signal || "NEUTRAL").toUpperCase();
-      const bpsFormatted = alphaBps !== undefined ? ` (${alphaBps > 0 ? "+" : ""}${alphaBps.toFixed(1)} bps)` : "";
-      if (sig.includes("BULLISH")) {
-        return `<span class="signal-badge signal-bullish">▲ BULLISH${bpsFormatted}</span>`;
-      } else if (sig.includes("BEARISH")) {
-        return `<span class="signal-badge signal-bearish">▼ BEARISH${bpsFormatted}</span>`;
-      }
-      return `<span class="signal-badge signal-neutral">● NEUTRAL${bpsFormatted}</span>`;
-    }
-
-    function formatNumber(num, decimals = 4) {
-      if (num === undefined || num === null || isNaN(num)) return "--";
-      return Number(num).toFixed(decimals);
-    }
-
-    function formatPrice(p) {
-      if (!p) return "--";
-      if (p < 1) return "$" + Number(p).toFixed(6);
-      if (p < 100) return "$" + Number(p).toFixed(4);
-      return "$" + Number(p).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    }
-
-    function renderCoinCard(symbol, flash = false) {
-      const coin = coinsData[symbol];
-      if (!coin) return;
-
-      let card = document.getElementById(`card-${symbol.replace(/[^a-zA-Z0-9]/g, "_")}`);
-      const isNew = !card;
-
-      if (isNew) {
-        card = document.createElement("article");
-        card.className = "coin-section-card";
-        card.id = `card-${symbol.replace(/[^a-zA-Z0-9]/g, "_")}`;
-        document.getElementById("coins-container").appendChild(card);
-      }
-
-      const ex = coin.exchange || "COINDCX";
-      const sector = coin.sector || "MEME";
-      const benchmarks = coin.benchmarks ? coin.benchmarks.join(" · ") : "BTC · ETH";
-      const currP = formatPrice(coin.current_price);
-      const benchP = formatPrice(coin.benchmark_price);
-
-      // Cross-verification
-      const cv = coin.cross_verification || {
-        concordance: 1.0,
-        consensus_signal: coin.signal || "NEUTRAL",
-        models_count: 3,
-        bullish_count: 3,
-      };
-
-      const concordancePct = Math.round((cv.concordance || 1.0) * 100);
-      const agreementText = `${concordancePct}% Agreement (${cv.bullish_count || 0}/${cv.models_count || 3} Bullish)`;
-
-      // Microstructure items
-      const ctx = coin.microstructure_context || {};
-      const volZ = ctx.volume_zscore_60m !== undefined ? `${ctx.volume_zscore_60m > 0 ? "+" : ""}${ctx.volume_zscore_60m.toFixed(2)}σ` : "+0.45σ";
-      const rvr = ctx.relative_volume_ratio_15m !== undefined ? `${ctx.relative_volume_ratio_15m.toFixed(2)}x` : "1.42x";
-      const funding = ctx.funding_rate_bps !== undefined ? `${ctx.funding_rate_bps > 0 ? "+" : ""}${ctx.funding_rate_bps.toFixed(2)} bps` : "+1.25 bps";
-      const oiDelta = ctx.oi_delta_15m_pct !== undefined ? `${ctx.oi_delta_15m_pct > 0 ? "+" : ""}${ctx.oi_delta_15m_pct.toFixed(2)}%` : "+0.65%";
-
-      // Model predictions
-      const models = coin.model_predictions || {
-        "LightGBM": {
-          model_name: "LightGBM",
-          expected_residual_alpha_bps: coin.expected_residual_alpha_bps || 42.5,
-          z_score: coin.z_score || 2.14,
-          signal: coin.signal || "BULLISH_RESIDUAL",
-          confidence_percentile: coin.confidence_percentile || 94.2,
-          hit_rate: 0.575,
-          spearman_ic: 0.1226,
-        },
-        "XGBoost": {
-          model_name: "XGBoost",
-          expected_residual_alpha_bps: (coin.expected_residual_alpha_bps || 42.5) * 0.95,
-          z_score: (coin.z_score || 2.14) * 0.96,
-          signal: coin.signal || "BULLISH_RESIDUAL",
-          confidence_percentile: 91.5,
-          hit_rate: 0.568,
-          spearman_ic: 0.1140,
-        },
-        "CatBoost": {
-          model_name: "CatBoost",
-          expected_residual_alpha_bps: (coin.expected_residual_alpha_bps || 42.5) * 1.03,
-          z_score: (coin.z_score || 2.14) * 1.02,
-          signal: coin.signal || "BULLISH_RESIDUAL",
-          confidence_percentile: 95.1,
-          hit_rate: 0.581,
-          spearman_ic: 0.1305,
-        }
-      };
-
-      const flashClass = flash ? ((coin.expected_residual_alpha_bps || 0) >= 0 ? "flash-green" : "flash-red") : "";
-
-      let modelsRowsHtml = `
-        <tr class="consensus-row">
-          <td>
-            <div class="model-name-cell">
-              <span class="model-icon">⭐</span>
-              <span>Consensus Ensemble</span>
-            </div>
-          </td>
-          <td>${getSignalBadge(cv.consensus_signal || coin.signal, coin.expected_residual_alpha_bps)}</td>
-          <td class="alpha-val ${(coin.expected_residual_alpha_bps||0)>=0 ? 'val-positive':'val-negative'}">
-            ${(coin.expected_residual_alpha_bps||0)>0?'+':''}${formatNumber(coin.expected_residual_alpha_bps, 2)} bps
-          </td>
-          <td>${(coin.z_score||0)>0?'+':''}${formatNumber(coin.z_score, 2)}σ</td>
-          <td>
-            <div class="confidence-wrapper">
-              <div class="confidence-mini-bar">
-                <div class="confidence-fill" style="width: ${coin.confidence_percentile || 90}%;"></div>
-              </div>
-              <span>${formatNumber(coin.confidence_percentile, 1)}%</span>
-            </div>
-          </td>
-          <td>58.2%</td>
-          <td>+0.1410</td>
-          <td><span class="status-pill status-consensus">Aggregated</span></td>
+  <!-- Model breakdown table prototype -->
+  <template id="models-table-prototype">
+    <table class="models-table">
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Signal</th>
+          <th>Residual Alpha (basis points)</th>
+          <th>Strength</th>
+          <th>Confidence</th>
         </tr>
-      `;
+      </thead>
+    </table>
+  </template>
 
-      for (const [mName, mData] of Object.entries(models)) {
-        const icon = mName === "LightGBM" ? "⚡" : (mName === "XGBoost" ? "🚀" : "🐱");
-        const aVal = mData.expected_residual_alpha_bps || 0;
-        const zVal = mData.z_score || 0;
-        const hr = mData.hit_rate ? `${(mData.hit_rate * 100).toFixed(1)}%` : "57.2%";
-        const ic = mData.spearman_ic ? `${mData.spearman_ic > 0 ? "+" : ""}${mData.spearman_ic.toFixed(4)}` : "+0.1250";
-        const agrees = (mData.signal === cv.consensus_signal);
-        const statusHtml = agrees 
-          ? `<span class="status-pill status-verified">✓ Verified</span>`
-          : `<span class="status-pill status-divergent">⚠ Divergent</span>`;
+  <footer class="plain-english-glossary" id="glossary-footer">
+    <details class="glossary-details">
+      <summary class="glossary-summary">
+        <span class="glossary-title">The "Not a Finance-Bro" Cheat Sheet</span>
+        <span class="glossary-subtitle">Plain-English explanations of every number on this page</span>
+      </summary>
 
-        modelsRowsHtml += `
-          <tr>
-            <td>
-              <div class="model-name-cell">
-                <span class="model-icon">${icon}</span>
-                <span>${mName}</span>
-              </div>
-            </td>
-            <td>${getSignalBadge(mData.signal, aVal)}</td>
-            <td class="alpha-val ${aVal>=0 ? 'val-positive':'val-negative'}">
-              ${aVal>0?'+':''}${formatNumber(aVal, 2)} bps
-            </td>
-            <td>${zVal>0?'+':''}${formatNumber(zVal, 2)}σ</td>
-            <td>
-              <div class="confidence-wrapper">
-                <div class="confidence-mini-bar">
-                  <div class="confidence-fill" style="width: ${mData.confidence_percentile || 85}%;"></div>
-                </div>
-                <span>${formatNumber(mData.confidence_percentile, 1)}%</span>
-              </div>
-            </td>
-            <td>${hr}</td>
-            <td>${ic}</td>
-            <td>${statusHtml}</td>
-          </tr>
-        `;
-      }
-
-      let trainingBadge = "";
-      if (coin.training_status === "training") {
-        trainingBadge = `<span class="badge" style="background: rgba(234,179,8,0.2); color:#eab308; border:1px solid #eab308; animation: pulse 1s infinite;">⏳ Training Models...</span>`;
-      } else if (coin.is_custom_trained) {
-        trainingBadge = `<span class="badge" style="background: rgba(16,185,129,0.2); color:#10b981; border:1px solid rgba(16,185,129,0.4);" title="Custom LightGBM, XGBoost, and CatBoost models active">✓ Custom Models</span>`;
-      } else {
-        trainingBadge = `<button class="chip-btn" style="padding: 2px 8px; font-size:11px; background:#1e293b; color:#38bdf8; border-color:#38bdf8;" onclick="trainCoin('${symbol}')" title="Train LightGBM, XGBoost, and CatBoost specifically for ${symbol}">⚡ Train Models</button>`;
-      }
-
-      card.innerHTML = `
-        <div class="coin-header-bar">
-          <div class="symbol-info">
-            <div class="symbol-title-row">
-              <span class="symbol-name">${symbol}</span>
-              <span class="badge badge-exchange">${ex}</span>
-              <span class="badge badge-sector">${sector}</span>
-              ${trainingBadge}
+      <div class="glossary-grid">
+        <div class="glossary-card">
+          <h3>Win probability</h3>
+          <dl class="glossary-list">
+            <div class="glossary-item">
+              <dt><span class="term-badge">Win</span> Long / short win</dt>
+              <dd>Chance that a trade entered now hits its <strong>take-profit before its stop-loss</strong> within the horizon. Both levels scale with recent volatility; a timeout or touching both in one candle counts as a loss.</dd>
             </div>
-            <div class="sector-info">Benchmarks: ${benchmarks}</div>
-          </div>
-
-          <div class="price-box">
-            <div class="price-val ${flashClass}">${currP}</div>
-            <div class="price-bench">Bench: ${benchP}</div>
-          </div>
-
-          <div>
-            ${getSignalBadge(cv.consensus_signal || coin.signal, coin.expected_residual_alpha_bps)}
-          </div>
-
-          <div class="concordance-box">
-            <div class="concordance-val">
-              <span>🎯</span>
-              <span>${agreementText}</span>
+            <div class="glossary-item">
+              <dt><span class="term-badge">Needs</span> Break-even</dt>
+              <dd>The win rate at which the trade makes zero after fees (0.10% round trip assumed), using how large past losses really were. Below it, the trade loses money on average.</dd>
             </div>
-            <div class="concordance-bar-bg">
-              <div class="concordance-bar-fill" style="width: ${concordancePct}%;"></div>
+            <div class="glossary-item">
+              <dt><span class="term-badge">Edge</span> Proven edge</dt>
+              <dd>The probabilities scored better than simply quoting the usual win rate, on <em>newer</em> history the models never saw, with 90% confidence. Without it the page shows the usual (base) rate instead.</dd>
             </div>
-          </div>
-
-          <div>
-            <button class="btn-remove" onclick="removeCoin('${symbol}')" title="Remove coin">✕</button>
-          </div>
+            <div class="glossary-item">
+              <dt><span class="term-badge">bps</span> Basis points &amp; Residual Alpha</dt>
+              <dd><strong>1 bps = 0.01%</strong>. Residual Alpha is the expected move after removing Bitcoin's pull; it appears in the details as a secondary signal.</dd>
+            </div>
+          </dl>
         </div>
 
-        <div class="micro-strip">
-          <div class="micro-item"><span class="micro-label">Vol Z:</span><span class="micro-val">${volZ}</span></div>
-          <div class="micro-item"><span class="micro-label">15m RVR:</span><span class="micro-val">${rvr}</span></div>
-          <div class="micro-item"><span class="micro-label">Funding:</span><span class="micro-val">${funding}</span></div>
-          <div class="micro-item"><span class="micro-label">15m OI Δ:</span><span class="micro-val">${oiDelta}</span></div>
-          <div class="micro-item"><span class="micro-label">Safety:</span><span class="micro-val" style="color:#10b981;">AIR-GAPPED</span></div>
+        <div class="glossary-card">
+          <h3>Models &amp; verification</h3>
+          <dl class="glossary-list">
+            <div class="glossary-item">
+              <dt><span class="term-badge">Ens</span> Ensemble</dt>
+              <dd>A blend of LightGBM, XGBoost and CatBoost. Blending cancels out each model's blind spots for a steadier forecast.</dd>
+            </div>
+            <div class="glossary-item">
+              <dt><span class="term-badge">3/3</span> Model agreement</dt>
+              <dd>How many of the three models, on their own, point the same way as the signal. Disagreement means the direction is uncertain.</dd>
+            </div>
+            <div class="glossary-item">
+              <dt><span class="term-badge">Test</span> Tested on unseen data</dt>
+              <dd>Models train on older candles, are calibrated on the next stretch, and are scored on the newest stretch they never saw. "When it said go" replays every signal on that stretch, one trade at a time, after fees.</dd>
+            </div>
+            <div class="glossary-item">
+              <dt><span class="term-badge">AUC</span> Ranking quality</dt>
+              <dd>How well the model ranks winning trades above losing ones. <strong>0.5</strong> is a coin flip, <strong>1.0</strong> is perfect; crypto edges usually sit at 0.55–0.65.</dd>
+            </div>
+          </dl>
         </div>
 
-        <table class="models-table">
-          <thead>
-            <tr>
-              <th>Predictive Model</th>
-              <th>Signal Direction</th>
-              <th>15m Residual Alpha</th>
-              <th>Z-Score</th>
-              <th>Model Confidence</th>
-              <th>OOS Hit Rate</th>
-              <th>Spearman IC</th>
-              <th>Cross-Verification</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${modelsRowsHtml}
-          </tbody>
-        </table>
-      `;
-    }
+        <div class="glossary-card">
+          <h3>Market activity</h3>
+          <dl class="glossary-list">
+            <div class="glossary-item">
+              <dt><span class="term-badge">Book</span> Order book imbalance</dt>
+              <dd>Buy versus sell limit orders waiting in the book. Heavy bids can cushion dips; heavy asks can cap rallies.</dd>
+            </div>
+            <div class="glossary-item">
+              <dt><span class="term-badge">Risk</span> Long / short risk</dt>
+              <dd>A 0–100 hazard score for opening each side now, from overextension, liquidation and squeeze pressure, funding and volatility.</dd>
+            </div>
+            <div class="glossary-item">
+              <dt><span class="term-badge">CVD</span> Cumulative volume delta</dt>
+              <dd>Aggressive buying versus price. Flat price with strong buying can precede a breakout.</dd>
+            </div>
+            <div class="glossary-item">
+              <dt><span class="term-badge">Clock</span> Volume clock</dt>
+              <dd>Trading burst intensity versus a quiet baseline. Low readings flag dormant, choppy markets.</dd>
+            </div>
+          </dl>
+        </div>
+      </div>
+    </details>
+  </footer>
 
-    function renderAll() {
-      const container = document.getElementById("coins-container");
-      const symbols = Object.keys(coinsData);
-      if (symbols.length === 0) {
-        container.innerHTML = `
-          <div class="empty-state">
-            <h3>No coins currently tracked</h3>
-            <p>Add coins using the input bar above or click one of the quick presets.</p>
-          </div>
-        `;
-        return;
-      }
+  <div id="global-tooltip" class="fc-tooltip" role="tooltip" aria-hidden="true"></div>
 
-      symbols.forEach(sym => renderCoinCard(sym, false));
-    }
+  <div class="sidebar-backdrop" id="sidebar-backdrop" onclick="closeSidebar()"></div>
 
-    // Initial Load
-    async function loadInitialState() {
-      try {
-        const resp = await fetch("/api/coins");
-        if (resp.ok) {
-          const list = await resp.json();
-          list.forEach(c => { coinsData[c.symbol] = c; });
-          renderAll();
-        }
-      } catch (err) {
-        console.error("Initial load failed:", err);
-      }
-      initWebSocket();
-    }
+  <aside class="coindcx-sidebar" id="coindcx-sidebar" aria-label="Add a CoinDCX futures pair">
+    <div class="sidebar-header">
+      <div class="sidebar-title-group">
+        <h2 class="sidebar-title">Add pair</h2>
+        <span class="sidebar-count" id="sidebar-total-count">CoinDCX futures</span>
+      </div>
+      <button class="icon-btn sidebar-close-btn" onclick="closeSidebar()" aria-label="Close">
+        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" /></svg>
+      </button>
+    </div>
 
-    window.addEventListener("DOMContentLoaded", loadInitialState);
-  </script>
+    <div class="sidebar-search-box">
+      <div class="search-input-wrapper">
+        <svg class="icon search-icon" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5" /><path d="M10.5 10.5L14 14" /></svg>
+        <input
+          type="text"
+          class="sidebar-search-input"
+          id="sidebar-search-input"
+          placeholder="Search symbol, name or paste a CoinDCX link"
+          autocomplete="off"
+          spellcheck="false"
+          oninput="handleSidebarSearch(event)"
+        />
+        <button class="clear-search-btn" id="clear-search-btn" onclick="clearSidebarSearch()" aria-label="Clear search">
+          <svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M5 5l6 6M11 5l-6 6" /></svg>
+        </button>
+      </div>
+    </div>
+
+    <div class="sidebar-filter-tabs" role="group" aria-label="Filter by sector">
+      <button class="sidebar-tab-btn active" data-sector="ALL" onclick="setSidebarSector('ALL')">All</button>
+      <button class="sidebar-tab-btn" data-sector="MAJOR" onclick="setSidebarSector('MAJOR')">Majors</button>
+      <button class="sidebar-tab-btn" data-sector="MEME" onclick="setSidebarSector('MEME')">Meme</button>
+      <button class="sidebar-tab-btn" data-sector="L1" onclick="setSidebarSector('L1')">L1</button>
+      <button class="sidebar-tab-btn" data-sector="DEFI" onclick="setSidebarSector('DEFI')">DeFi</button>
+      <button class="sidebar-tab-btn" data-sector="AI" onclick="setSidebarSector('AI')">AI</button>
+      <button class="sidebar-tab-btn" data-sector="INFRA" onclick="setSidebarSector('INFRA')">Infra</button>
+      <button class="sidebar-tab-btn" data-sector="NFT_GAMING" onclick="setSidebarSector('NFT_GAMING')">NFT / Gaming</button>
+      <button class="sidebar-tab-btn" data-sector="GENERAL_ALT" onclick="setSidebarSector('GENERAL_ALT')">Other</button>
+    </div>
+
+    <div class="sidebar-coin-list" id="sidebar-coin-list"></div>
+  </aside>
+
+  <script src="/static/js/theme.js"></script>
+  <script src="/static/js/tooltips.js"></script>
+  <script src="/static/js/timeframe.js"></script>
+  <script src="/static/js/app.js"></script>
+  <script src="/static/js/sidebar.js"></script>
 </body>
 </html>

@@ -1,99 +1,22 @@
-"""Parquet storage manager and continuous cross-asset time alignment."""
+"""Continuous cross-asset time alignment."""
 
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import List, Optional
-import numpy as np
 import pandas as pd
 
 logger = logging.getLogger(__name__)
-
-
-class ParquetStorage:
-    """Manages raw and processed time-series storage in Apache Parquet."""
-
-    def __init__(
-        self,
-        base_dir: str | Path = "data",
-        compression: str = "zstd",
-    ) -> None:
-        self.base_dir = Path(base_dir)
-        self.raw_dir = self.base_dir / "raw"
-        self.processed_dir = self.base_dir / "processed"
-        self.compression = compression
-
-        self.raw_dir.mkdir(parents=True, exist_ok=True)
-        self.processed_dir.mkdir(parents=True, exist_ok=True)
-
-    def save_raw(
-        self,
-        df: pd.DataFrame,
-        symbol: str,
-        category: str = "klines",
-    ) -> Path:
-        """Partition by year and month and save as Parquet."""
-        if df.empty:
-            raise ValueError(f"Cannot save empty DataFrame for {symbol}")
-
-        df = df.copy()
-        if "timestamp" not in df.columns:
-            raise KeyError("DataFrame must have 'timestamp' column.")
-
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-        df["year"] = df["timestamp"].dt.year
-        df["month"] = df["timestamp"].dt.month
-
-        target_dir = self.raw_dir / category / f"symbol={symbol.upper()}"
-        target_dir.mkdir(parents=True, exist_ok=True)
-
-        file_path = target_dir / "data.parquet"
-        df.to_parquet(
-            file_path,
-            index=False,
-            compression=self.compression,
-            partition_cols=["year", "month"],
-        )
-        logger.info(f"Saved {len(df)} records for {symbol} ({category}) to {target_dir}")
-        return target_dir
-
-    def load_raw(
-        self,
-        symbol: str,
-        category: str = "klines",
-    ) -> pd.DataFrame:
-        """Load all partitioned Parquet files for a given symbol and category."""
-        target_dir = self.raw_dir / category / f"symbol={symbol.upper()}"
-        if not target_dir.exists():
-            logger.warning(f"No data found at {target_dir}")
-            return pd.DataFrame()
-
-        df = pd.read_parquet(target_dir)
-        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
-        return df.sort_values("timestamp").reset_index(drop=True)
-
-    def save_processed(self, df: pd.DataFrame, name: str = "feature_matrix") -> Path:
-        """Save aligned feature matrix to processed storage."""
-        file_path = self.processed_dir / f"{name}.parquet"
-        df.to_parquet(file_path, index=True, compression=self.compression)
-        logger.info(f"Saved processed feature matrix ({df.shape}) to {file_path}")
-        return file_path
-
-    def load_processed(self, name: str = "feature_matrix") -> pd.DataFrame:
-        """Load processed feature matrix."""
-        file_path = self.processed_dir / f"{name}.parquet"
-        if not file_path.exists():
-            raise FileNotFoundError(f"Processed file not found: {file_path}")
-        return pd.read_parquet(file_path)
 
 
 def align_cross_asset_data(
     target_df: pd.DataFrame,
     benchmark_dfs: dict[str, pd.DataFrame],
     max_gap_ffill_minutes: int = 3,
+    freq: str = "1min",
 ) -> pd.DataFrame:
-    """Align target and benchmark assets onto a continuous master UTC 1-minute grid.
+    """Align target and benchmark assets onto a continuous master UTC grid (1-minute by default).
+
+    `max_gap_ffill_minutes` counts bars of `freq`.
     
     1. Creates master date_range index spanning common min/max.
     2. Reindexes each asset.
@@ -114,7 +37,7 @@ def align_cross_asset_data(
     if min_time > max_time:
         raise ValueError(f"No overlapping time range found across assets (min: {min_time}, max: {max_time})")
 
-    master_index = pd.date_range(start=min_time, end=max_time, freq="1min", tz="UTC", name="timestamp")
+    master_index = pd.date_range(start=min_time, end=max_time, freq=freq, tz="UTC", name="timestamp")
 
     merged = pd.DataFrame(index=master_index)
 

@@ -73,6 +73,8 @@ class ForecastEvent(BaseModel):
     signal: SignalState
     confidence_percentile: float
     microstructure_context: Dict[str, Any] = Field(default_factory=dict)
+    trade_risk: Dict[str, Any] = Field(default_factory=dict)
+    orderbook_depth: Dict[str, Any] = Field(default_factory=dict)
     execution_disabled: bool = True  # Permanently True
     model_predictions: Dict[str, ModelForecastItem] = Field(default_factory=dict)
     cross_verification: Optional[CrossVerificationSummary] = None

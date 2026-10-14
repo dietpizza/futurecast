@@ -255,16 +255,23 @@ class MultiModelEnsemble:
         y_train: pd.Series,
         X_val: Optional[pd.DataFrame] = None,
         y_val: Optional[pd.Series] = None,
+        X_test: Optional[pd.DataFrame] = None,
+        y_test: Optional[pd.Series] = None,
     ) -> Dict[str, Dict[str, float]]:
-        """Train LightGBM, XGBoost, and CatBoost models and compute validation metrics."""
+        """Train LightGBM, XGBoost, and CatBoost and score them.
+
+        X_val/y_val drive early stopping. When X_test/y_test are given, metrics come from
+        that untouched slice; scoring on the early-stopping slice would flatter the models.
+        """
         self.metrics = {}
+        X_score, y_score = (X_test, y_test) if X_test is not None and y_test is not None else (X_val, y_val)
         for name, model in self.models.items():
             try:
                 logger.info(f"Training {name} model...")
                 model.train(X_train, y_train, X_val, y_val)
-                if X_val is not None and y_val is not None:
-                    preds = model.predict(X_val)
-                    m = compute_regression_metrics(preds, y_val)
+                if X_score is not None and y_score is not None:
+                    preds = model.predict(X_score)
+                    m = compute_regression_metrics(preds, y_score)
                     self.metrics[name] = m
                     logger.info(f"{name} -> Hit Rate: {m['hit_rate']*100:.1f}%, IC: {m['spearman_ic']:+.4f}")
             except Exception as e:
@@ -274,13 +281,12 @@ class MultiModelEnsemble:
         return self.metrics
 
     def predict_all(self, X: pd.DataFrame) -> Dict[str, float]:
-        """Generate point predictions from all active models."""
+        """Point predictions from every model that is actually trained (missing ones are omitted)."""
         preds: Dict[str, float] = {}
         for name, model in self.models.items():
             if model.model is not None:
                 try:
-                    p = float(model.predict(X)[0])
-                    preds[name] = p
+                    preds[name] = float(model.predict(X)[-1])
                 except Exception as e:
                     logger.debug(f"Prediction failed for {name}: {e}")
         return preds
@@ -293,10 +299,12 @@ class MultiModelEnsemble:
     ) -> Tuple[float, float, SignalState, float, Dict[str, ModelForecastItem], CrossVerificationSummary]:
         """Perform multi-model cross-verification and return consensus and per-model diagnostics."""
         raw_preds = self.predict_all(latest_features)
-
-        # Fallback if no models loaded
         if not raw_preds:
-            raw_preds = {"LightGBM": 0.0}
+            empty = CrossVerificationSummary(
+                concordance=0.0, consensus_signal=SignalState.NEUTRAL, models_count=0,
+                bullish_count=0, bearish_count=0, neutral_count=0, dispersion_bps=0.0,
+            )
+            return 0.0, 0.0, SignalState.NEUTRAL, 50.0, {}, empty
 
         model_items: Dict[str, ModelForecastItem] = {}
         signals: List[SignalState] = []
@@ -304,7 +312,7 @@ class MultiModelEnsemble:
         z_scores: List[float] = []
 
         for name, raw_p in raw_preds.items():
-            exp_bps, z, sig, conf = calibrator.calibrate(raw_pred=raw_p, beta_hedge_ratio=beta)
+            exp_bps, z, sig, conf = calibrator.calibrate(raw_pred=raw_p, beta_hedge_ratio=beta, key=name)
             m_stats = self.metrics.get(name, {})
             item = ModelForecastItem(
                 model_name=name,
@@ -357,9 +365,12 @@ class MultiModelEnsemble:
 
         return consensus_alpha, consensus_z, consensus_sig, avg_conf, model_items, summary
 
-    def save_models(self, directory: str | Path, symbol_clean: str) -> None:
+    def save_models(self, directory: str | Path, symbol_clean: str, meta: Optional[Dict[str, Any]] = None) -> None:
         p = Path(directory)
         p.mkdir(parents=True, exist_ok=True)
+        if meta is not None:
+            with open(p / f"residual_meta_{symbol_clean}.json", "w", encoding="utf-8") as f:
+                json.dump(meta, f, indent=2)
         # Save each model
         if self.models["LightGBM"].model is not None:
             self.models["LightGBM"].save(p / f"lightgbm_{symbol_clean}_residual_alpha.txt")
@@ -374,43 +385,42 @@ class MultiModelEnsemble:
             with open(metrics_file, "w", encoding="utf-8") as f:
                 json.dump(self.metrics, f, indent=2)
 
-    def load_models(self, directory: str | Path, symbol_clean: str) -> bool:
+    def load_models(self, directory: str | Path, symbol_clean: str, bar_interval: Optional[str] = None) -> bool:
+        """Load this symbol's own models. Never borrows another coin's weights.
+
+        With `bar_interval`, models are only loaded if they were trained on that candle
+        interval (models trained on other candles would see differently scaled features).
+        """
         p = Path(directory)
+        if bar_interval is not None:
+            meta_file = p / f"residual_meta_{symbol_clean}.json"
+            try:
+                with open(meta_file, "r", encoding="utf-8") as f:
+                    meta = json.load(f)
+            except (OSError, ValueError):
+                meta = {}
+            if meta.get("bar_interval") != bar_interval:
+                logger.info(f"No {bar_interval} residual models for {symbol_clean}; needs training")
+                self.is_loaded = False
+                return False
+
+        files = {
+            "LightGBM": p / f"lightgbm_{symbol_clean}_residual_alpha.txt",
+            "XGBoost": p / f"xgboost_{symbol_clean}_residual_alpha.json",
+            "CatBoost": p / f"catboost_{symbol_clean}_residual_alpha.cbm",
+        }
         loaded_any = False
-
-        # LightGBM
-        lgb_paths = [
-            p / f"lightgbm_{symbol_clean}_residual_alpha.txt",
-            p / f"lightgbm_{symbol_clean}.txt",
-            p / "lightgbm_doge_residual_alpha.txt",
-        ]
-        for lp in lgb_paths:
-            if lp.exists() and self.models["LightGBM"].load(lp):
+        for name, path in files.items():
+            if path.exists() and self.models[name].load(path):
                 loaded_any = True
-                break
 
-        # XGBoost
-        xgb_p = p / f"xgboost_{symbol_clean}_residual_alpha.json"
-        if xgb_p.exists() and self.models["XGBoost"].load(xgb_p):
-            loaded_any = True
-
-        # CatBoost
-        cb_p = p / f"catboost_{symbol_clean}_residual_alpha.cbm"
-        if cb_p.exists() and self.models["CatBoost"].load(cb_p):
-            loaded_any = True
-
-        # Load metrics if available
         metrics_file = p / f"metrics_{symbol_clean}.json"
         if metrics_file.exists():
             try:
                 with open(metrics_file, "r", encoding="utf-8") as f:
                     self.metrics = json.load(f)
             except Exception:
-                pass
-
-        # If only LightGBM was loaded, provide reasonable default metrics from verified runs
-        if "LightGBM" not in self.metrics and self.models["LightGBM"].model is not None:
-            self.metrics["LightGBM"] = {"hit_rate": 0.575, "spearman_ic": 0.1226}
+                self.metrics = {}
 
         self.is_loaded = loaded_any
         return loaded_any

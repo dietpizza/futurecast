@@ -69,14 +69,14 @@ class DriftMonitor:
         if not self.pending_queue:
             return None
 
-        # Check the oldest forecast
-        oldest = self.pending_queue[0]
-        # In 1m bars, 15m difference:
-        time_elapsed_min = (current_time - oldest.timestamp).total_seconds() / 60.0
-
-        if time_elapsed_min >= self.horizon_bars:
+        last_record = None
+        while self.pending_queue:
+            oldest = self.pending_queue[0]
+            time_elapsed_min = (current_time - oldest.timestamp).total_seconds() / 60.0
+            if time_elapsed_min < self.horizon_bars:
+                break
             f = self.pending_queue.popleft()
-            
+
             # Realized log returns
             r_target = np.log(current_target_price / f.target_price_at_t)
             r_bench = np.log(current_bench_price / f.bench_price_at_t)
@@ -84,19 +84,18 @@ class DriftMonitor:
             # Realized residual alpha
             realized_alpha = r_target - (f.beta_at_t * r_bench)
 
-            record = RealizedRecord(
+            last_record = RealizedRecord(
                 timestamp=f.timestamp,
                 predicted=f.predicted_residual,
                 realized=realized_alpha,
             )
-            self.completed_history.append(record)
-            return record
+            self.completed_history.append(last_record)
 
-        return None
+        return last_record
 
-    def get_rolling_metrics(self, window: int = 240) -> dict[str, float]:
+    def get_rolling_metrics(self, window: int = 120) -> dict[str, float]:
         """Compute rolling Spearman IC, RMSE, and hit rate over completed forecasts."""
-        if len(self.completed_history) < 20:
+        if len(self.completed_history) < 5:
             return {"rolling_ic": 0.0, "rolling_rmse": 0.0, "sample_count": len(self.completed_history)}
 
         recent = list(self.completed_history)[-window:]

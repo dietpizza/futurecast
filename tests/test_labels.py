@@ -1,12 +1,11 @@
-"""Tests for target generation and triple barrier labeling."""
+"""Tests for residual alpha target generation."""
 
 from datetime import datetime, timezone
 import numpy as np
-import pandas as pd
-from futurecast.ingestion.binance import generate_synthetic_data
+from futurecast.ingestion.synthetic import generate_synthetic_data
 from futurecast.ingestion.storage import align_cross_asset_data
 from futurecast.features.pipeline import FeaturePipeline
-from futurecast.labels.residual_alpha import compute_residual_alpha_target, compute_triple_barrier_labels
+from futurecast.labels.residual_alpha import compute_residual_alpha_target
 
 
 def test_residual_alpha_target_calculation():
@@ -35,12 +34,3 @@ def test_residual_alpha_target_calculation():
     # Prior bars should have finite numbers where features are valid
     valid_slice = target.iloc[100:-15]
     assert valid_slice.notna().any()
-
-
-def test_triple_barrier_labels():
-    prices = pd.Series([100.0, 101.0, 103.0, 99.0, 95.0, 96.0, 98.0, 100.0])
-    atr = pd.Series([1.0] * len(prices))
-
-    # Upper barrier = 100 + 1.8*1.0 = 101.8. Price hits 103 on bar index 2. Label should be +1.0
-    labels = compute_triple_barrier_labels(prices, atr, multiplier=1.8, max_holding_bars=3)
-    assert labels.iloc[0] == 1.0

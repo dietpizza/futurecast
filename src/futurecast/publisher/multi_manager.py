@@ -1,38 +1,112 @@
-"""Multi-Coin Stream Manager for concurrent real-time forecasting and cross-verification."""
+"""Multi-coin stream manager: real closed candles in, calibrated trade probabilities out.
+
+Every model input comes from fully closed 5m and 15m candles of the coin's underlying
+perpetual (CoinDCXPublicClient.fetch_candle_history). New candles are pulled when one
+closes; between candles only the displayed CoinDCX price and the order book refresh.
+
+- 5m candles: residual-alpha models, trade risk, microstructure, and the 5m / 15m / 1h
+  win-probability horizons.
+- 15m candles: the 4h / 8h win-probability horizons (more history per candle).
+"""
 
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+import threading
+from typing import Any, Dict, List, Optional, Set, Tuple
+
 import numpy as np
 import pandas as pd
 
 from futurecast.config import AppConfig, load_config
 from futurecast.engine.forecaster import PureForecastEngine
-from futurecast.engine.calibration import SignalCalibrator
+from futurecast.features.orderbook import compute_orderbook_metrics
 from futurecast.features.pipeline import FeaturePipeline
-from futurecast.ingestion.binance import BinancePublicClient, generate_synthetic_data
+from futurecast.features.shitcoin import is_high_beta_shitcoin
 from futurecast.ingestion.coindcx import CoinDCXPublicClient
 from futurecast.ingestion.factory import (
     detect_exchange,
-    resolve_benchmarks,
     get_symbol_sector,
+    resolve_benchmarks,
     sanitize_symbol_for_filename,
-    get_exchange_client,
 )
-from futurecast.ingestion.storage import ParquetStorage, align_cross_asset_data
+from futurecast.ingestion.storage import align_cross_asset_data
+from futurecast.labels.residual_alpha import compute_residual_alpha_target
 from futurecast.models.ensemble import MultiModelEnsemble
-from futurecast.schema import ForecastEvent, ModelForecastItem, CrossVerificationSummary, SignalState
+from futurecast.models.trade_probability import (
+    HORIZONS_BY_INTERVAL,
+    TradeModelConfig,
+    TradeProbabilityModel,
+    trade_model_path,
+)
+from futurecast.schema import ForecastEvent
 
 logger = logging.getLogger(__name__)
 
+CANDLE_MINUTES: Dict[str, int] = {"5m": 5, "15m": 15}
+ENGINE_INTERVAL = "5m"
+RESIDUAL_HORIZON_MINUTES = 15
+HISTORY_BARS = 20_000  # per interval for training: ~69 days of 5m, ~208 days of 15m candles
+LIVE_BARS = 1_600  # per interval kept live; the longest feature window is 1,440 candles
+MIN_TRAIN_BARS = 3_000
+
+
+def _synthetic_candles(symbol: str, minutes: int, bars: int, rng: np.random.Generator) -> pd.DataFrame:
+    """Random-walk closed candles, used only in offline mode."""
+    end = pd.Timestamp.now(tz="UTC").floor(f"{minutes}min") - pd.Timedelta(minutes=minutes)
+    ts = pd.date_range(end=end, periods=bars, freq=f"{minutes}min")
+    close = 100.0 * np.exp(np.cumsum(rng.normal(0, 0.002 * np.sqrt(minutes), bars)))
+    open_ = np.r_[close[0], close[:-1]]
+    wick = np.abs(rng.normal(0, 0.001 * np.sqrt(minutes), bars))
+    volume = rng.uniform(1e5, 5e5, bars)
+    taker = rng.uniform(0.4, 0.6, bars)
+    return pd.DataFrame({
+        "timestamp": ts, "symbol": symbol, "open": open_,
+        "high": np.maximum(open_, close) * (1 + wick), "low": np.minimum(open_, close) * (1 - wick),
+        "close": close, "volume": volume, "quote_volume": volume * close, "count": 100,
+        "taker_buy_volume": volume * taker, "taker_buy_quote_volume": volume * close * taker,
+    })
+
+
+def _json_safe(obj: Any) -> Any:
+    """Plain JSON types only: numpy scalars unwrapped, NaN/inf become None."""
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(v) for v in obj]
+    if isinstance(obj, np.generic):
+        obj = obj.item()
+    if isinstance(obj, float) and not np.isfinite(obj):
+        return None
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
+        return obj
+    return str(obj)
+
+
+def _event_payload(ev: ForecastEvent) -> Dict[str, Any]:
+    """15m residual-alpha model output, order book and trade risk for the latest 5m candle."""
+    return {
+        "timestamp": ev.timestamp.isoformat(),
+        "benchmark_price": ev.benchmark_price,
+        "expected_residual_alpha_bps": ev.expected_residual_alpha_15m_bps,
+        "z_score": ev.z_score,
+        "beta_hedge_ratio": ev.beta_hedge_ratio,
+        "signal": getattr(ev.signal, "value", str(ev.signal)),
+        "confidence_percentile": ev.confidence_percentile,
+        "microstructure_context": ev.microstructure_context,
+        "trade_risk": ev.trade_risk,
+        "orderbook_depth": ev.orderbook_depth,
+        "model_predictions": {name: item.model_dump(mode="json") for name, item in ev.model_predictions.items()},
+        "cross_verification": ev.cross_verification.model_dump(mode="json") if ev.cross_verification else None,
+    }
+
 
 class SymbolWorker:
-    """Manages continuous state, feature pipeline, and multi-model engine for a single coin."""
+    """Candle buffers, models and latest outputs for one coin."""
 
     def __init__(
         self,
@@ -48,192 +122,340 @@ class SymbolWorker:
         self.benchmarks = benchmarks
         self.sector = sector
         self.config = config
-        self.models_dir = models_dir
+        self.models_dir = Path(models_dir)
         self.clean_symbol = sanitize_symbol_for_filename(symbol)
+        self._lock = threading.RLock()
 
-        # 1. Feature pipeline
-        self.pipe = FeaturePipeline(
-            config=config.features,
-            target_symbol=self.symbol,
-            primary_benchmark=self.benchmarks[0],
-            secondary_benchmark=self.benchmarks[1] if len(self.benchmarks) > 1 else self.benchmarks[0],
-        )
+        secondary = benchmarks[1] if len(benchmarks) > 1 else benchmarks[0]
+        self.pipes = {
+            iv: FeaturePipeline(config=config.features, target_symbol=symbol,
+                                primary_benchmark=benchmarks[0], secondary_benchmark=secondary)
+            for iv in CANDLE_MINUTES
+        }
 
-        # 2. Multi-model ensemble
         self.ensemble = MultiModelEnsemble(config.model)
-        has_custom = (
-            (self.models_dir / f"lightgbm_{self.clean_symbol}_residual_alpha.txt").exists()
-            or (self.models_dir / f"xgboost_{self.clean_symbol}_residual_alpha.json").exists()
-            or (self.models_dir / f"catboost_{self.clean_symbol}_residual_alpha.cbm").exists()
-        )
-        if has_custom:
-            self.ensemble.load_models(self.models_dir, self.clean_symbol)
-            self.is_custom_trained = True
-            self.training_status = "custom_trained"
-        else:
-            # Fallback to general baseline weights until custom models are trained
-            self.ensemble.load_models(self.models_dir, "doge")
-            self.is_custom_trained = False
-            self.training_status = "baseline"
+        self.ensemble.load_models(self.models_dir, self.clean_symbol, bar_interval=ENGINE_INTERVAL)
+        self.trade_models: Dict[str, Optional[TradeProbabilityModel]] = {
+            iv: TradeProbabilityModel.load(self._trade_path(iv)) for iv in CANDLE_MINUTES
+        }
+        self.is_custom_trained = all(self.trade_models.values())
+        self.training_status = "trained" if self.is_custom_trained else "untrained"
+        self.training_error: Optional[str] = None
+        self.training_report: Dict[str, Any] = {}
 
-        # 3. Pure forecast engine (Air-Gapped: Zero execution)
-        # Create a customized config copy for this symbol
-        cfg_copy = config.model_copy(deep=True)
-        cfg_copy.assets.target_asset = self.symbol
-        cfg_copy.assets.benchmark_assets = self.benchmarks
-
-        from futurecast.publisher.broadcaster import SignalBroadcaster
-
-        broadcaster = SignalBroadcaster(
-            output_dir=config.forecasting.output_dir,
-            render_terminal=False,
-        )
-
-        self.engine = PureForecastEngine(
-            config=cfg_copy,
-            trainer=self.ensemble.models["LightGBM"],
-            ensemble=self.ensemble,
-            feature_pipeline=self.pipe,
-            broadcaster=broadcaster,
-            min_buffer_size=60,  # Fast warmup for responsive UI
-        )
-
-        self.aligned_buffer = pd.DataFrame()
+        self.engine = self._make_engine()
+        self.candles: Dict[str, pd.DataFrame] = {iv: pd.DataFrame() for iv in CANDLE_MINUTES}
+        self.data_source: Optional[str] = None
+        self.trade_probabilities: Dict[str, Any] = {}
+        self.live_price: Optional[float] = None
+        self.orderbook: Dict[str, Any] = {}
         self.latest_event: Optional[ForecastEvent] = None
-        self.history: List[ForecastEvent] = []
         self.last_bar_time: Optional[datetime] = None
 
-    def train_sync(self, days: int = 7) -> Dict[str, Any]:
-        """Ingest history, train LightGBM, XGBoost, and CatBoost, and hot-reload weights."""
-        from futurecast.labels.residual_alpha import compute_residual_alpha_target
-        from futurecast.ingestion.cache import DataCache
+    # ───────── setup ─────────
 
-        self.training_status = "training"
-        logger.info(f"Starting background training for {self.symbol} ({days} days)...")
+    def _trade_path(self, interval: str) -> Path:
+        return trade_model_path(self.models_dir, f"{self.clean_symbol}_{interval}")
 
-        cache = DataCache(cache_dir=self.config.assets.storage.cache_dir, enabled=True)
-        client = get_exchange_client(self.exchange, cache=cache)
+    def _make_engine(self) -> PureForecastEngine:
+        from futurecast.publisher.broadcaster import SignalBroadcaster
 
-        now = datetime.now(timezone.utc)
-        start_time = now - timedelta(days=days)
-        start_ms = int(start_time.timestamp() * 1000)
-        end_ms = int(now.timestamp() * 1000)
-
-        target_df = pd.DataFrame()
-        try:
-            target_df = client.fetch_klines(self.symbol, start_time_ms=start_ms, end_time_ms=end_ms, limit=1500)
-            if target_df.empty:
-                target_df = client.fetch_klines(self.symbol, limit=1500)
-        except Exception as e:
-            logger.warning(f"Could not fetch live klines for {self.symbol}: {e}")
-
-        bench_dfs = {}
-        for b in self.benchmarks:
-            try:
-                b_df = client.fetch_klines(b, start_time_ms=start_ms, end_time_ms=end_ms, limit=1500)
-                if b_df.empty:
-                    b_df = client.fetch_klines(b, limit=1500)
-                bench_dfs[b] = b_df
-            except Exception:
-                bench_dfs[b] = pd.DataFrame()
-
-        client.close()
-
-        # Fallback to high-fidelity synthetic market bars if API was unavailable
-        if target_df.empty or any(b_df.empty for b_df in bench_dfs.values()):
-            periods = min(days * 1440, 2000)
-            base_p = 0.15 if "DOGE" in self.symbol else (180.0 if "SOL" in self.symbol else 1.0)
-            target_df = generate_synthetic_data(self.symbol, start=start_time, periods=periods, base_price=base_p, volatility=0.75, seed=51)
-            bench_dfs = {}
-            for b in self.benchmarks:
-                b_p = 68000.0 if "BTC" in b else (2650.0 if "ETH" in b else 180.0)
-                bench_dfs[b] = generate_synthetic_data(b, start=start_time, periods=periods, base_price=b_p, volatility=0.5, seed=52)
-
-        aligned = align_cross_asset_data(target_df, bench_dfs)
-        features = self.pipe.generate_features(aligned)
-        target = compute_residual_alpha_target(
-            aligned_df=aligned,
-            features_df=features,
-            target_symbol=self.symbol,
-            benchmark_symbol=self.benchmarks[0],
-            horizon_minutes=self.config.features.target.horizon_min,
+        cfg = self.config.model_copy(deep=True)
+        cfg.assets.target_asset = self.symbol
+        cfg.assets.benchmark_assets = self.benchmarks
+        return PureForecastEngine(
+            config=cfg,
+            trainer=self.ensemble.models["LightGBM"],
+            ensemble=self.ensemble,
+            feature_pipeline=self.pipes[ENGINE_INTERVAL],
+            broadcaster=SignalBroadcaster(output_dir=self.config.forecasting.output_dir, render_terminal=False),
+            min_buffer_size=60,
+            max_buffer_size=LIVE_BARS,
+            bar_minutes=CANDLE_MINUTES[ENGINE_INTERVAL],
         )
 
-        valid_idx = target.dropna().index
-        clean_features = features.loc[valid_idx].ffill().bfill().fillna(0.0)
-        common_idx = clean_features.index.intersection(valid_idx)
-        X = clean_features.loc[common_idx]
-        y = target.loc[common_idx]
+    @property
+    def aligned_buffer(self) -> pd.DataFrame:
+        return self.candles[ENGINE_INTERVAL]
 
-        split_idx = int(len(X) * 0.8)
-        new_ensemble = MultiModelEnsemble(self.config.model)
-        metrics = new_ensemble.train_all(
-            X.iloc[:split_idx], y.iloc[:split_idx], X.iloc[split_idx:], y.iloc[split_idx:]
-        )
-        new_ensemble.save_models(self.models_dir, self.clean_symbol)
+    # ───────── candles ─────────
 
-        # Hot-reload into running worker
-        self.ensemble = new_ensemble
-        self.engine.trainer = new_ensemble.models["LightGBM"]
-        self.engine.ensemble = new_ensemble
-        self.is_custom_trained = True
-        self.training_status = "custom_trained"
+    def _fetch_aligned(self, client: CoinDCXPublicClient, interval: str, bars: int) -> Tuple[pd.DataFrame, Optional[str]]:
+        target, source = client.fetch_candle_history(self.symbol, interval, bars)
+        if target.empty:
+            return pd.DataFrame(), None
+        benches = {}
+        for bench in self.benchmarks:
+            bench_df, _ = client.fetch_candle_history(bench, interval, bars)
+            if bench_df.empty:
+                return pd.DataFrame(), None
+            benches[bench] = bench_df
+        aligned = align_cross_asset_data(target, benches, freq=f"{CANDLE_MINUTES[interval]}min")
+        return aligned, source
 
-        # Re-evaluate latest bar with the newly trained models
-        if not self.aligned_buffer.empty:
-            self.feed_bar(self.aligned_buffer.iloc[[-1]])
+    def refresh_candles(self, client: CoinDCXPublicClient, now: Optional[pd.Timestamp] = None) -> List[str]:
+        """Append newly closed candles per interval and rerun models; returns intervals updated."""
+        now = now or pd.Timestamp.now(tz="UTC")
+        updated = []
+        for iv, minutes in CANDLE_MINUTES.items():
+            have = self.candles[iv]
+            last_closed = now.floor(f"{minutes}min") - pd.Timedelta(minutes=minutes)
+            if not have.empty and have.index[-1] >= last_closed:
+                continue
+            missing = LIVE_BARS if have.empty else int((last_closed - have.index[-1]) / pd.Timedelta(minutes=minutes))
+            fresh, source = self._fetch_aligned(client, iv, min(LIVE_BARS, missing + 3))
+            if fresh.empty:
+                continue
 
-        logger.info(f"✓ Completed training and hot-reloaded models for {self.symbol}!")
-        return metrics
+            with self._lock:
+                self.data_source = source
+                if have.empty or missing >= LIVE_BARS - 3:  # first load, or a gap too long to bridge
+                    self.candles[iv] = fresh.tail(LIVE_BARS)
+                    if iv == ENGINE_INTERVAL:
+                        self._load_engine(self.candles[iv])
+                else:
+                    new_rows = fresh[fresh.index > have.index[-1]]
+                    if new_rows.empty:
+                        continue
+                    self.candles[iv] = pd.concat([have, new_rows]).tail(LIVE_BARS)
+                    if iv == ENGINE_INTERVAL:
+                        self._feed_engine(new_rows)
+                self._update_trade_probabilities(iv)
+            updated.append(iv)
+        return updated
 
-    def warmup_with_data(self, df: pd.DataFrame) -> None:
-        """Feed historical bars to initialize feature buffers and rolling states."""
-        if df.empty:
-            return
-        self.aligned_buffer = df.copy()
-        if len(df) > 60:
-            warmup_slice = df.tail(120)
-            self.engine.feed_bars(warmup_slice.iloc[:-1])
-            event = self.engine.feed_bars(warmup_slice.iloc[[-1]])
-            if event is not None:
-                self.latest_event = event
-                self.last_bar_time = event.timestamp
+    def load_synthetic(self, seed: int = 7) -> None:
+        """Offline mode only: random-walk candles so the page has something to render."""
+        rng = np.random.default_rng(seed)
+        with self._lock:
+            for iv, minutes in CANDLE_MINUTES.items():
+                target = _synthetic_candles(self.symbol, minutes, 400, rng)
+                benches = {b: _synthetic_candles(b, minutes, 400, rng) for b in self.benchmarks}
+                self.candles[iv] = align_cross_asset_data(target, benches, freq=f"{minutes}min")
+            self.data_source = "synthetic (offline mode)"
+            self._load_engine(self.candles[ENGINE_INTERVAL])
+            for iv in CANDLE_MINUTES:
+                self._update_trade_probabilities(iv)
 
-    def feed_bar(self, bar_df: pd.DataFrame) -> Optional[ForecastEvent]:
-        """Ingest single new closed 1m bar and evaluate all models."""
-        event = self.engine.feed_bars(bar_df)
+    # ───────── models ─────────
+
+    def _feed_engine(self, rows: pd.DataFrame) -> None:
+        event = self.engine.feed_bars(rows, orderbook_depth=self.orderbook)
         if event is not None:
             self.latest_event = event
             self.last_bar_time = event.timestamp
-            self.history.append(event)
-            if len(self.history) > 50:
-                self.history.pop(0)
-        return event
+
+    def _load_engine(self, candles: pd.DataFrame, warm_rows: int = 300) -> None:
+        """Restart the residual engine on a candle history, pre-filling per-model z-score history."""
+        self.engine.reset()
+        if len(candles) < 2:
+            return
+        self._feed_engine(candles.iloc[:-1])
+        feats = self.engine.last_features
+        if feats is not None and self.ensemble.is_loaded:
+            tail = feats.iloc[-warm_rows:]
+            for name, model in self.ensemble.models.items():
+                if model.model is None:
+                    continue
+                try:
+                    for pred in model.predict(tail):
+                        self.engine.calibrator.calibrate(float(pred), 1.0, key=name)
+                except Exception as err:
+                    logger.debug(f"Z-score warmup failed for {self.symbol} {name}: {err}")
+        self._feed_engine(candles.iloc[[-1]])
+
+    def _update_trade_probabilities(self, interval: str) -> None:
+        for horizon in HORIZONS_BY_INTERVAL[interval]:
+            self.trade_probabilities.pop(horizon, None)
+        model = self.trade_models.get(interval)
+        candles = self.candles[interval]
+        if model is None or candles.empty:
+            return
+        feats = self.engine.last_features
+        if interval != ENGINE_INTERVAL or feats is None or feats.index[-1] != candles.index[-1]:
+            feats = self.pipes[interval].generate_features(candles)
+        try:
+            self.trade_probabilities.update(model.predict_latest(feats, candles[f"{self.symbol}_close"]))
+        except Exception as err:
+            logger.warning(f"Trade probability failed for {self.symbol} {interval}: {err}")
+
+    def refresh_orderbook(self, client: CoinDCXPublicClient) -> None:
+        raw = client.fetch_orderbook_depth(self.symbol, 20)
+        metrics = compute_orderbook_metrics(raw)
+        with self._lock:
+            self.orderbook = metrics
+            self.engine.refresh_trade_risk(metrics)
+
+    def _train_residual(self, aligned: pd.DataFrame, feats: pd.DataFrame) -> Tuple[MultiModelEnsemble, Dict[str, Any]]:
+        """15m residual-alpha ensemble on 5m candles: purged 70/15/15 split, scored on the last slice."""
+        horizon = RESIDUAL_HORIZON_MINUTES // CANDLE_MINUTES[ENGINE_INTERVAL]
+        target = compute_residual_alpha_target(
+            aligned_df=aligned, features_df=feats, target_symbol=self.symbol,
+            benchmark_symbol=self.benchmarks[0], horizon_minutes=horizon,
+        )
+        valid = target.notna()
+        X, y = feats.loc[valid], target.loc[valid]
+        n = len(y)
+        train_end, es_end = int(n * 0.70), int(n * 0.85)
+        ensemble = MultiModelEnsemble(self.config.model)
+        metrics = ensemble.train_all(
+            X.iloc[:train_end - horizon], y.iloc[:train_end - horizon],
+            X.iloc[train_end:es_end - horizon], y.iloc[train_end:es_end - horizon],
+            X.iloc[es_end:], y.iloc[es_end:],
+        )
+        return ensemble, metrics
+
+    def train_sync(self, days: int = 0) -> Dict[str, Any]:
+        """Fetch real candle history, validate and fit all models, then hot-swap them in.
+
+        `days` is accepted for API compatibility; history depth is HISTORY_BARS per interval.
+        Never trains on synthetic data: if the exchange cannot supply enough candles the
+        coin stays untrained and the error is reported.
+        """
+        self.training_status = "training"
+        self.training_error = None
+        client = CoinDCXPublicClient()
+        report: Dict[str, Any] = {"data": {}, "trade": {}}
+        try:
+            trade_models: Dict[str, TradeProbabilityModel] = {}
+            history: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]] = {}
+            for iv in CANDLE_MINUTES:
+                aligned, source = self._fetch_aligned(client, iv, HISTORY_BARS)
+                if len(aligned) < MIN_TRAIN_BARS:
+                    raise RuntimeError(f"only {len(aligned)} closed {iv} candles available (need {MIN_TRAIN_BARS})")
+                feats = self.pipes[iv].generate_features(aligned)
+                model = TradeProbabilityModel(TradeModelConfig(interval=iv, horizons=dict(HORIZONS_BY_INTERVAL[iv])))
+                report["trade"][iv] = model.fit(
+                    feats, aligned[f"{self.symbol}_close"], aligned[f"{self.symbol}_high"], aligned[f"{self.symbol}_low"]
+                )
+                report["data"][iv] = {"source": source, "candles": len(aligned),
+                                      "start": str(aligned.index[0]), "end": str(aligned.index[-1])}
+                trade_models[iv] = model
+                history[iv] = (aligned, feats)
+
+            aligned5, feats5 = history[ENGINE_INTERVAL]
+            ensemble, report["residual"] = self._train_residual(aligned5, feats5)
+        except Exception as err:
+            self.training_status = "failed"
+            self.training_error = str(err)
+            logger.error(f"Training failed for {self.symbol}: {err}")
+            raise
+        finally:
+            client.close()
+
+        for iv, model in trade_models.items():
+            model.save(self._trade_path(iv))
+        ensemble.save_models(self.models_dir, self.clean_symbol, meta={
+            "bar_interval": ENGINE_INTERVAL,
+            "horizon_minutes": RESIDUAL_HORIZON_MINUTES,
+            "trained_at": datetime.now(timezone.utc).isoformat(),
+            **{f"history_{k}": v for k, v in report["data"][ENGINE_INTERVAL].items()},
+        })
+
+        with self._lock:
+            self.trade_models = dict(trade_models)
+            self.ensemble = ensemble
+            self.engine.ensemble = ensemble
+            self.engine.trainer = ensemble.models["LightGBM"]
+            for iv, (aligned, _) in history.items():
+                self.candles[iv] = aligned.tail(LIVE_BARS)
+            self.data_source = report["data"][ENGINE_INTERVAL]["source"]
+            self._load_engine(self.candles[ENGINE_INTERVAL])
+            for iv in CANDLE_MINUTES:
+                self._update_trade_probabilities(iv)
+            self.is_custom_trained = True
+            self.training_status = "trained"
+            self.training_report = report
+
+        logger.info(f"Trained and hot-reloaded models for {self.symbol}")
+        return report
+
+    # ───────── output ─────────
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            ev = self.latest_event
+            candles = self.candles[ENGINE_INTERVAL]
+            price = self.live_price
+            if price is None and ev is not None and ":1000" not in (self.data_source or ""):
+                price = ev.current_price  # underlying close; skipped for 1000x-quoted contracts
+            data: Dict[str, Any] = {
+                "symbol": self.symbol,
+                "exchange": self.exchange.upper(),
+                "sector": self.sector,
+                "benchmarks": self.benchmarks,
+                "is_shitcoin": is_high_beta_shitcoin(self.symbol, self.sector),
+                "has_data": not candles.empty,
+                "is_custom_trained": self.is_custom_trained,
+                "training_status": self.training_status,
+                "training_error": self.training_error,
+                "data_source": self.data_source,
+                "candle_time": str(candles.index[-1]) if not candles.empty else None,
+                "current_price": price,
+                "trade_probabilities": self.trade_probabilities,
+                "execution_disabled": True,
+            }
+            if ev is not None:
+                data.update(_event_payload(ev))
+            return _json_safe(data)
 
 
 class MultiCoinStreamManager:
-    """Central supervisor coordinating real-time streaming and multi-model evaluation."""
+    """Central supervisor coordinating real-time candles, models and WebSocket clients."""
 
     def __init__(
         self,
         config: Optional[AppConfig] = None,
         models_dir: str = "models",
         cache_dir: str = ".cache",
+        persistence_path: Optional[str | Path] = "data/tracked_symbols.json",
+        live: bool = True,
     ) -> None:
         self.config = config or load_config()
         self.models_dir = Path(models_dir)
         self.cache_dir = Path(cache_dir)
-        self.storage = ParquetStorage(self.config.assets.storage.raw_dir.split("/")[0])
+        self.persistence_path = Path(persistence_path) if persistence_path is not None else None
+        self.live = live
         self.workers: Dict[str, SymbolWorker] = {}
         self.ws_clients: Set[Any] = set()
         self._running = False
-        self._streaming_task: Optional[asyncio.Task] = None
+        self._train_lock: Optional[asyncio.Lock] = None
+        self._training_tasks: Dict[str, asyncio.Task] = {}
+
+    def load_persisted_symbols(self) -> List[str]:
+        """Load list of tracked symbols from disk if previously saved."""
+        if self.persistence_path is None:
+            return []
+        try:
+            if self.persistence_path.exists():
+                with open(self.persistence_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    symbols = data.get("symbols", [])
+                    if isinstance(symbols, list) and symbols:
+                        cleaned = [s.strip().upper() for s in symbols if isinstance(s, str) and s.strip()]
+                        logger.info(f"Loaded {len(cleaned)} persisted symbols from {self.persistence_path}: {cleaned}")
+                        return cleaned
+        except Exception as e:
+            logger.warning(f"Could not load tracked symbols from {self.persistence_path}: {e}")
+        return []
+
+    def persist_symbols(self) -> None:
+        """Save current list of tracked symbols to disk."""
+        if self.persistence_path is None:
+            return
+        try:
+            self.persistence_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"symbols": list(self.workers.keys()), "updated_at": datetime.now(timezone.utc).isoformat()}
+            with open(self.persistence_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not persist tracked symbols to {self.persistence_path}: {e}")
 
     def get_tracked_symbols(self) -> List[str]:
         return list(self.workers.keys())
 
-    def add_symbol(self, symbol: str, exchange: Optional[str] = None) -> SymbolWorker:
-        """Dynamically add and initialize a new token for live forecasting."""
+    def add_symbol(self, symbol: str, exchange: Optional[str] = None, persist: bool = True) -> SymbolWorker:
+        """Start tracking a coin. In live mode its candles load on the next stream tick."""
         sym = symbol.strip().upper()
         if sym in self.workers:
             return self.workers[sym]
@@ -241,159 +463,76 @@ class MultiCoinStreamManager:
         ex = (exchange or detect_exchange(sym)).lower()
         benchmarks = resolve_benchmarks(sym, ex, sector_aware=True)
         sector = get_symbol_sector(sym)
-
         logger.info(f"Adding coin: {sym} (Exchange: {ex}, Sector: {sector}, Benchmarks: {benchmarks})")
-        worker = SymbolWorker(
-            symbol=sym,
-            exchange=ex,
-            benchmarks=benchmarks,
-            sector=sector,
-            config=self.config,
-            models_dir=self.models_dir,
-        )
-
-        # Load warmup data from processed parquet or cache if available and matches symbol & benchmarks
-        clean = worker.clean_symbol
-        warmup_df = pd.DataFrame()
-        try:
-            loaded = self.storage.load_processed(f"aligned_{clean}")
-            if not loaded.empty and f"{sym}_close" in loaded.columns and f"{benchmarks[0]}_close" in loaded.columns:
-                warmup_df = loaded
-        except Exception:
-            warmup_df = pd.DataFrame()
-
-        if warmup_df.empty or len(warmup_df) < 30:
-            # Generate realistic synthetic warmup data so the engine is immediately active
-            logger.info(f"Generating immediate initial baseline for {sym}...")
-            now = datetime.now(timezone.utc)
-            start_time = now - timedelta(hours=3)
-            base_p = 0.15 if "DOGE" in sym else (180.0 if "SOL" in sym else (0.45 if "BLUR" in sym else 1.0))
-            if "BTC" in sym:
-                base_p = 68000.0
-            elif "ETH" in sym:
-                base_p = 2650.0
-
-            target_warmup = generate_synthetic_data(
-                sym, start=start_time, periods=180, base_price=base_p, volatility=0.75, seed=42
-            )
-            bench_warmup = {}
-            for b in benchmarks:
-                b_p = 68000.0 if "BTC" in b else (2650.0 if "ETH" in b else 180.0)
-                bench_warmup[b] = generate_synthetic_data(
-                    b, start=start_time, periods=180, base_price=b_p, volatility=0.5, seed=43
-                )
-            warmup_df = align_cross_asset_data(target_warmup, bench_warmup)
-
-        worker.warmup_with_data(warmup_df)
+        worker = SymbolWorker(sym, ex, benchmarks, sector, self.config, self.models_dir)
+        if not self.live:
+            worker.load_synthetic(seed=sum(map(ord, sym)))
         self.workers[sym] = worker
+        if persist:
+            self.persist_symbols()
         return worker
 
-    async def train_symbol_models(self, symbol: str, days: int = 7) -> Dict[str, Any]:
-        """Trigger background training of LightGBM, XGBoost, and CatBoost for a symbol."""
+    def remove_symbol(self, symbol: str, persist: bool = True) -> bool:
+        sym = symbol.strip().upper()
+        if sym not in self.workers:
+            return False
+        del self.workers[sym]
+        if persist:
+            self.persist_symbols()
+        logger.info(f"Removed coin: {sym}")
+        return True
+
+    # ───────── training ─────────
+
+    def schedule_training(self, symbol: str) -> None:
+        """Queue background training (one coin at a time) unless already queued or running."""
+        sym = symbol.strip().upper()
+        task = self._training_tasks.get(sym)
+        if task is not None and not task.done():
+            return
+        self._training_tasks[sym] = asyncio.create_task(self.train_symbol_models(sym))
+
+    def ensure_trained(self) -> None:
+        for sym, worker in self.workers.items():
+            if not worker.is_custom_trained:
+                self.schedule_training(sym)
+
+    async def train_symbol_models(self, symbol: str, days: int = 0) -> Dict[str, Any]:
         sym = symbol.strip().upper()
         if sym not in self.workers:
             raise KeyError(f"Symbol {sym} is not currently tracked")
-
         worker = self.workers[sym]
-        worker.training_status = "training"
-        await self.broadcast({
-            "type": "TRAINING_UPDATE",
-            "symbol": sym,
-            "training_status": "training",
-        })
+        if self._train_lock is None:
+            self._train_lock = asyncio.Lock()
 
-        # Run CPU-intensive multi-model training in background thread pool
-        loop = asyncio.get_running_loop()
-        metrics = await loop.run_in_executor(None, worker.train_sync, days)
-
-        # Broadcast completion
-        await self.broadcast({
-            "type": "TRAINING_UPDATE",
-            "symbol": sym,
-            "training_status": "custom_trained",
-            "is_custom_trained": True,
-            "metrics": metrics,
-        })
-        # Broadcast refreshed snapshot with new multi-model predictions
-        snapshot = self.get_snapshot()
-        coin_data = next((c for c in snapshot if c["symbol"] == sym), None)
-        if coin_data:
-            await self.broadcast({
-                "type": "FORECAST_UPDATE",
-                **coin_data,
-            })
-        return metrics
-
-    def remove_symbol(self, symbol: str) -> bool:
-        """Remove a coin from active streaming."""
-        sym = symbol.strip().upper()
+        worker.training_status = "queued"
+        await self.broadcast({"type": "FORECAST_UPDATE", **worker.snapshot()})
+        async with self._train_lock:
+            worker.training_status = "training"
+            await self.broadcast({"type": "FORECAST_UPDATE", **worker.snapshot()})
+            loop = asyncio.get_running_loop()
+            try:
+                report = await loop.run_in_executor(None, worker.train_sync, days)
+            except Exception as err:
+                report = {"status": "failed", "error": str(err)}
         if sym in self.workers:
-            del self.workers[sym]
-            logger.info(f"Removed coin: {sym}")
-            return True
-        return False
+            await self.broadcast({"type": "FORECAST_UPDATE", **worker.snapshot()})
+        return report
 
-    def get_snapshot(self) -> List[Dict[str, Any]]:
-        """Return full current snapshot of all active coins and their multi-model predictions."""
-        snapshot = []
-        for sym, w in self.workers.items():
-            ev = w.latest_event
-            data: Dict[str, Any] = {
-                "symbol": w.symbol,
-                "exchange": w.exchange.upper(),
-                "sector": w.sector,
-                "benchmarks": w.benchmarks,
-                "has_data": ev is not None,
-                "is_custom_trained": w.is_custom_trained,
-                "training_status": w.training_status,
-            }
-            if ev is not None:
-                data.update({
-                    "timestamp": ev.timestamp.isoformat(),
-                    "current_price": ev.current_price,
-                    "benchmark_price": ev.benchmark_price,
-                    "expected_residual_alpha_bps": ev.expected_residual_alpha_15m_bps,
-                    "z_score": ev.z_score,
-                    "beta_hedge_ratio": ev.beta_hedge_ratio,
-                    "signal": ev.signal.value if hasattr(ev.signal, "value") else str(ev.signal),
-                    "confidence_percentile": ev.confidence_percentile,
-                    "microstructure_context": ev.microstructure_context,
-                    "execution_disabled": ev.execution_disabled,
-                })
-                # Multi-model predictions
-                preds_dict = {}
-                for m_name, item in ev.model_predictions.items():
-                    preds_dict[m_name] = {
-                        "model_name": item.model_name,
-                        "expected_residual_alpha_bps": item.expected_residual_alpha_bps,
-                        "z_score": item.z_score,
-                        "signal": item.signal.value if hasattr(item.signal, "value") else str(item.signal),
-                        "confidence_percentile": item.confidence_percentile,
-                        "hit_rate": item.hit_rate,
-                        "spearman_ic": item.spearman_ic,
-                    }
-                data["model_predictions"] = preds_dict
+    # ───────── output ─────────
 
-                # Cross-verification summary
-                if ev.cross_verification is not None:
-                    cv = ev.cross_verification
-                    data["cross_verification"] = {
-                        "concordance": cv.concordance,
-                        "consensus_signal": cv.consensus_signal.value if hasattr(cv.consensus_signal, "value") else str(cv.consensus_signal),
-                        "models_count": cv.models_count,
-                        "bullish_count": cv.bullish_count,
-                        "bearish_count": cv.bearish_count,
-                        "neutral_count": cv.neutral_count,
-                        "dispersion_bps": cv.dispersion_bps,
-                    }
-            snapshot.append(data)
-        return snapshot
+    def coin_snapshot(self, worker: SymbolWorker) -> Dict[str, Any]:
+        return worker.snapshot()
+
+    def get_snapshot(self, timeframe: str = "15m") -> List[Dict[str, Any]]:
+        """Current state of every tracked coin (all horizons are included)."""
+        return [w.snapshot() for w in list(self.workers.values())]
 
     async def broadcast(self, message: Dict[str, Any]) -> None:
         """Push JSON message to all connected WebSocket clients."""
         if not self.ws_clients:
             return
-        payload = json.dumps(message)
+        payload = json.dumps(message, default=str)
         disconnected = set()
         for ws in self.ws_clients:
             try:
@@ -403,104 +542,46 @@ class MultiCoinStreamManager:
         for ws in disconnected:
             self.ws_clients.discard(ws)
 
+    # ───────── streaming ─────────
+
+    def _refresh_worker(self, worker: SymbolWorker, client: CoinDCXPublicClient) -> None:
+        try:
+            worker.refresh_candles(client)
+        except Exception as err:
+            logger.warning(f"Candle refresh failed for {worker.symbol}: {err}")
+        try:
+            worker.refresh_orderbook(client)
+        except Exception as err:
+            logger.debug(f"Order book refresh failed for {worker.symbol}: {err}")
+
     async def start_streaming(self, poll_interval_sec: float = 3.0, live: bool = True) -> None:
-        """Start background loop updating coins with newly closed bars."""
+        """Refresh prices and order books every poll; candles and models when a candle closes."""
         self._running = True
-        logger.info(f"Starting MultiCoinStreamManager background loop (interval: {poll_interval_sec}s, live: {live})...")
+        self.live = live
+        logger.info(f"Starting stream loop (interval: {poll_interval_sec}s, live: {live})...")
+        client = CoinDCXPublicClient()
+        if live:
+            self.ensure_trained()
 
         while self._running:
             try:
-                if not self.workers:
+                workers = list(self.workers.values())
+                if not workers:
                     await asyncio.sleep(1.0)
                     continue
-
-                for sym, worker in list(self.workers.items()):
-                    # Generate a next continuous bar update
-                    prev_df = worker.aligned_buffer
-                    if prev_df.empty:
-                        continue
-
-                    # Create next continuous tick
-                    last_ts = prev_df.index[-1] if not prev_df.empty else datetime.now(timezone.utc)
-                    next_ts = last_ts + timedelta(minutes=1)
-
-                    # Realistic price delta
-                    target_last = float(prev_df[f"{worker.symbol}_close"].iloc[-1])
-                    bench_last = float(prev_df[f"{worker.benchmarks[0]}_close"].iloc[-1])
-                    sec_last = float(prev_df[f"{worker.benchmarks[1]}_close"].iloc[-1]) if len(worker.benchmarks) > 1 else bench_last
-
-                    # Market move + idiosyncratic residual
-                    mkt_ret = np.random.normal(0.0001, 0.001)
-                    res_ret = np.random.normal(0.00005, 0.0015)
-                    target_ret = 1.15 * mkt_ret + res_ret
-
-                    new_target_p = max(0.00001, target_last * (1.0 + target_ret))
-                    new_bench_p = max(1.0, bench_last * (1.0 + mkt_ret))
-                    new_sec_p = max(1.0, sec_last * (1.0 + mkt_ret * 0.9))
-
-                    new_bar_dict = {
-                        f"{worker.symbol}_open": target_last,
-                        f"{worker.symbol}_high": max(target_last, new_target_p) * 1.0005,
-                        f"{worker.symbol}_low": min(target_last, new_target_p) * 0.9995,
-                        f"{worker.symbol}_close": new_target_p,
-                        f"{worker.symbol}_volume": float(np.random.uniform(50000, 200000)),
-                        f"{worker.symbol}_quote_volume": float(new_target_p * np.random.uniform(50000, 200000)),
-                        f"{worker.symbol}_count": int(np.random.randint(50, 200)),
-                        f"{worker.symbol}_taker_buy_volume": float(np.random.uniform(25000, 100000)),
-                        f"{worker.symbol}_taker_buy_quote_volume": float(new_target_p * np.random.uniform(25000, 100000)),
-                        f"{worker.benchmarks[0]}_close": new_bench_p,
-                        f"{worker.benchmarks[0]}_volume": float(np.random.uniform(10, 50)),
-                    }
-                    if len(worker.benchmarks) > 1:
-                        new_bar_dict[f"{worker.benchmarks[1]}_close"] = new_sec_p
-                        new_bar_dict[f"{worker.benchmarks[1]}_volume"] = float(np.random.uniform(100, 500))
-
-                    new_row = pd.DataFrame([new_bar_dict], index=[next_ts])
-                    worker.aligned_buffer = pd.concat([worker.aligned_buffer, new_row]).tail(300)
-
-                    event = worker.feed_bar(new_row)
-                    if event is not None:
-                        # Broadcast real-time update
-                        update_msg = {
-                            "type": "FORECAST_UPDATE",
-                            "symbol": worker.symbol,
-                            "timestamp": event.timestamp.isoformat(),
-                            "current_price": event.current_price,
-                            "benchmark_price": event.benchmark_price,
-                            "expected_residual_alpha_bps": event.expected_residual_alpha_15m_bps,
-                            "z_score": event.z_score,
-                            "beta_hedge_ratio": event.beta_hedge_ratio,
-                            "signal": event.signal.value if hasattr(event.signal, "value") else str(event.signal),
-                            "confidence_percentile": event.confidence_percentile,
-                            "microstructure_context": event.microstructure_context,
-                            "sector": worker.sector,
-                            "model_predictions": {
-                                m_name: {
-                                    "model_name": item.model_name,
-                                    "expected_residual_alpha_bps": item.expected_residual_alpha_bps,
-                                    "z_score": item.z_score,
-                                    "signal": item.signal.value if hasattr(item.signal, "value") else str(item.signal),
-                                    "confidence_percentile": item.confidence_percentile,
-                                    "hit_rate": item.hit_rate,
-                                    "spearman_ic": item.spearman_ic,
-                                }
-                                for m_name, item in event.model_predictions.items()
-                            },
-                            "cross_verification": {
-                                "concordance": event.cross_verification.concordance,
-                                "consensus_signal": event.cross_verification.consensus_signal.value if hasattr(event.cross_verification.consensus_signal, "value") else str(event.cross_verification.consensus_signal),
-                                "models_count": event.cross_verification.models_count,
-                                "bullish_count": event.cross_verification.bullish_count,
-                                "bearish_count": event.cross_verification.bearish_count,
-                                "neutral_count": event.cross_verification.neutral_count,
-                                "dispersion_bps": event.cross_verification.dispersion_bps,
-                            } if event.cross_verification else None,
-                        }
-                        await self.broadcast(update_msg)
-
+                if live:
+                    rt_prices = await asyncio.to_thread(client.fetch_futures_rt_prices)
+                    for w in workers:
+                        info = rt_prices.get(w.symbol) or {}
+                        price = info.get("ls") or info.get("mp")
+                        if price:
+                            w.live_price = float(price)
+                    await asyncio.gather(*(asyncio.to_thread(self._refresh_worker, w, client) for w in workers))
+                for w in workers:
+                    if w.symbol in self.workers:
+                        await self.broadcast({"type": "FORECAST_UPDATE", **w.snapshot()})
             except Exception as e:
-                logger.error(f"Error in MultiCoinStreamManager loop: {e}", exc_info=True)
-
+                logger.error(f"Error in stream loop: {e}", exc_info=True)
             await asyncio.sleep(poll_interval_sec)
 
     def stop(self) -> None:

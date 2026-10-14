@@ -1,10 +1,9 @@
-"""Tests for data ingestion, continuous timestamp alignment, and storage."""
+"""Tests for synthetic data and continuous timestamp alignment."""
 
 from datetime import datetime, timezone
 import pandas as pd
-import numpy as np
-from futurecast.ingestion.binance import generate_synthetic_data
-from futurecast.ingestion.storage import align_cross_asset_data, ParquetStorage
+from futurecast.ingestion.synthetic import generate_synthetic_data
+from futurecast.ingestion.storage import align_cross_asset_data
 
 
 def test_synthetic_data_generation():
@@ -37,15 +36,3 @@ def test_cross_asset_alignment_with_gap_ffill():
     assert "DOGEUSDT_close" in aligned.columns
     assert "BTCUSDT_close" in aligned.columns
     assert not aligned["BTCUSDT_close"].isna().any()
-
-
-def test_parquet_storage_roundtrip(tmp_path):
-    storage = ParquetStorage(base_dir=tmp_path)
-    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
-    df = generate_synthetic_data("DOGEUSDT", start=start, periods=50, base_price=0.15, volatility=0.6)
-
-    storage.save_raw(df, "DOGEUSDT", category="klines")
-    loaded = storage.load_raw("DOGEUSDT", category="klines")
-
-    assert len(loaded) == len(df)
-    assert np.allclose(loaded["close"].values, df["close"].values)

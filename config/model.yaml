@@ -1,4 +1,4 @@
-# LightGBM Model & Walk-Forward Validation Configuration
+# LightGBM Model & Forecasting Configuration
 
 lightgbm:
   objective: "regression_l1"
@@ -17,19 +17,6 @@ lightgbm:
   n_jobs: -1
   verbose: -1
   early_stopping_rounds: 50
-
-validation:
-  train_window_days: 120    # ~4 months rolling
-  test_window_days: 30      # 1 month test
-  step_window_days: 30      # 1 month step forward
-  purge_window_minutes: 60  # Purge final 60m before test
-  embargo_window_minutes: 1440 # 24h embargo after test
-  min_acceptable_ic: 0.03
-
-optuna:
-  n_trials: 40
-  timeout_seconds: 3600
-  study_name: "lightgbm_residual_alpha"
 
 forecasting:
   zscore_window_minutes: 1440

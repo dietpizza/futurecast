@@ -16,6 +16,7 @@ logs/
 models/*.txt
 models/*.json
 models/*.cbm
+models/*.joblib
 .cache/
 catboost_info/
 

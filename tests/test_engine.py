@@ -8,10 +8,10 @@ from futurecast.engine.calibration import SignalCalibrator
 from futurecast.engine.drift import DriftMonitor
 from futurecast.engine.forecaster import PureForecastEngine
 from futurecast.features.pipeline import FeaturePipeline
-from futurecast.ingestion.binance import generate_synthetic_data
+from futurecast.ingestion.synthetic import generate_synthetic_data
 from futurecast.ingestion.storage import align_cross_asset_data
 from futurecast.labels.residual_alpha import compute_residual_alpha_target
-from futurecast.models.trainer import ModelTrainer
+from futurecast.models.ensemble import MultiModelEnsemble
 from futurecast.publisher.broadcaster import SignalBroadcaster
 from futurecast.schema import SignalState
 
@@ -79,13 +79,14 @@ def test_pure_forecast_engine_air_gapped_guarantee(tmp_path):
     X = features.loc[valid_idx]
     y = target.loc[valid_idx]
 
-    trainer = ModelTrainer(cfg.model)
-    trainer.train(X, y)
+    ensemble = MultiModelEnsemble(cfg.model)
+    ensemble.train_all(X, y)
 
     broadcaster = SignalBroadcaster(output_dir=tmp_path / "forecasts")
     engine = PureForecastEngine(
         config=cfg,
-        trainer=trainer,
+        trainer=ensemble.models["LightGBM"],
+        ensemble=ensemble,
         feature_pipeline=pipeline,
         broadcaster=broadcaster,
         min_buffer_size=60,

@@ -5,7 +5,6 @@ import pandas as pd
 import numpy as np
 import pytest
 from futurecast.ingestion.cache import DataCache
-from futurecast.ingestion.binance import BinancePublicClient
 
 
 def test_data_cache_put_get(tmp_path):
@@ -52,32 +51,3 @@ def test_data_cache_clear_and_stats(tmp_path):
     # Clear all
     cache.clear()
     assert cache.get_stats()["file_count"] == 0
-
-
-def test_binance_client_uses_cache(tmp_path, monkeypatch):
-    cache = DataCache(cache_dir=tmp_path / ".cache")
-    client = BinancePublicClient(cache=cache)
-
-    http_calls = 0
-
-    def mock_get_with_retry(endpoint, params):
-        nonlocal http_calls
-        http_calls += 1
-        # Return mock kline row
-        return [[
-            1700000000000, "0.1", "0.1", "0.1", "0.1", "100",
-            1700000060000, "10", 5, "50", "5", "0"
-        ]]
-
-    monkeypatch.setattr(client, "_get_with_retry", mock_get_with_retry)
-
-    # First fetch: should execute HTTP call
-    df1 = client.fetch_klines("DOGEUSDT", start_time_ms=1700000000000, end_time_ms=1700000060000, limit=1)
-    assert http_calls == 1
-    assert len(df1) == 1
-
-    # Second fetch with same parameters: should hit cache and NOT make HTTP call
-    df2 = client.fetch_klines("DOGEUSDT", start_time_ms=1700000000000, end_time_ms=1700000060000, limit=1)
-    assert http_calls == 1  # Still 1 because it hit cache!
-    assert len(df2) == 1
-    assert np.allclose(df1["close"].values, df2["close"].values)

@@ -1,6 +1,6 @@
 # futurecast ⚡
 
-A high-performance, **air-gapped cross-asset Gradient Boosted Decision Tree (LightGBM) forecasting engine** for high-beta cryptocurrency tokens (such as `DOGEUSDT` relative to `BTCUSDT` and `ETHUSDT`).
+A local **web dashboard for CoinDCX futures**: it tracks any number of coins, trains LightGBM / XGBoost / CatBoost models on their real 5m and 15m candles, and serves calibrated long / short win probabilities per horizon next to a cross-asset residual alpha forecast.
 
 > **Zero-Execution Security Guarantee**: This system is architecturally constrained to **forecasting, signal calibration, telemetry streaming, and drift auditing only**. It contains zero exchange trading credentials, zero order routing routines, and zero signing methods, preventing live trade execution or capital risk under any condition.
 
@@ -9,37 +9,32 @@ A high-performance, **air-gapped cross-asset Gradient Boosted Decision Tree (Lig
 ## Architecture Overview
 
 ```
-[ Public Market Data Feeds (Read-Only) ]
-  (Binance / Bybit Public REST & WebSockets: DOGE, BTC, ETH)
+[ CoinDCX Public REST (Read-Only) ]
+  (closed 5m / 15m candles of the coin and its sector benchmarks, order book)
                │
                ▼
-   [ Data Ingestion & Storage Engine ]
-  (Continuous UTC Alignment, Gap Handling, Parquet Storage)
+   [ Alignment & Vectorized Feature Engineering ]
+  (Lead-Lags, Volume Z-Scores, Volatility, Basis, OFI Proxies, Order Book)
                │
                ▼
-   [ Vectorized Feature Engineering ]
-  (35 Stationary Features: Lead-Lags, Volume Z-Scores, Basis, OFI Proxies)
+   [ Labels ]
+  (Residual Alpha, Take-Profit / Stop-Loss Barrier Outcomes per Horizon)
                │
                ▼
-   [ Target Generator (Offline/Training) ]
-  (15-Minute Residual Alpha & Triple Barrier Labels)
+ [ Time-Ordered Fit → Calibrate → Test, One Horizon Gap Between Slices ]
                │
                ▼
- [ Purged & Embargoed Walk-Forward CV ] ◄── [ Hyperparameter Tuning (Optuna) ]
-               │
-               ▼
-[ Model Registry & Artifact Store (LightGBM) ]
+[ Per-Coin Model Store: LightGBM · XGBoost · CatBoost + Platt Calibration ]
                │
                ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│      AIR-GAPPED REAL-TIME FORECASTING & TELEMETRY ENGINE               │
+│      READ-ONLY WEB DASHBOARD (FastAPI + WebSocket, localhost)          │
 │                                                                        │
 │  • Strictly NO Private Keys / NO Trading APIs                          │
-│  • Input: Real-Time Ingested Bars & Orderflow Proxies                  │
-│  • Output: Calibrated Residual Alpha (\hat{y}_t), Beta Hedge Ratio,    │
-│    Regime Indicators, Confidence Intervals                             │
-│  • Delivery: In-Memory Bus, Local SQLite/Parquet Audit Log,           │
-│    WebSocket / Webhook Event Stream, Terminal Rich Feed                │
+│  • Input: Closed Candles, Live Price & Order Book                      │
+│  • Output: Calibrated Win Probabilities (5m · 15m · 1h · 4h · 8h),     │
+│    Residual Alpha, Beta Hedge Ratio, Trade Risk, Model Agreement       │
+│  • Audit: JSONL Forecast Log in logs/forecasts/                        │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -67,101 +62,56 @@ $$y_t = R_{\text{DOGE}, t \to t+15} - \beta_{t, 1440} \cdot R_{\text{BTC}, t \to
 
 ---
 
-## Validation Strategy (Zero-Leakage Protocol)
+## Validation (Zero-Leakage Protocol)
+
+Training a coin uses its candle history strictly in time order, with a one-horizon gap
+between slices so overlapping trade windows cannot leak outcomes across a boundary:
 
 ```
-[ Window 1: Train (4 Months) ] ──[ Purge (60m) ]──► [ Test (1 Month) ] ──[ Embargo (24h) ]
-         └── Step Forward 1 Month ──►
-         [ Window 2: Train (4 Months) ] ──[ Purge (60m) ]──► [ Test (1 Month) ] ──[ Embargo (24h) ]
+| fit | early-stop |  calibrate  |    test    |
+oldest ------------------------------------> newest
 ```
 
-* **Purging (60 min):** Strips the final 60 bars of training to prevent target overlap ($t \to t+15$).
-* **Embargoing (24 hours):** Discards 24 hours post-test window before beginning the next split.
-* **Evaluation Metrics:** Spearman Rank Information Coefficient (IC), IC Information Ratio ($IC\_IR$), and Theoretical Long/Short Friction-Free Sharpe.
+* **Calibration:** the three classifiers' average is mapped onto observed win frequencies with Platt scaling.
+* **Edge test:** a side is shown as having edge only when the lower bound of a block-bootstrap interval of its Brier skill on the untouched test slice is above zero; otherwise the recent base rate is served.
+* **Trading check:** the test slice is replayed as a strategy, and a long / short signal is raised only for sides whose replay made money after costs.
+
+See `src/futurecast/models/trade_probability.py` for the full procedure.
 
 ---
 
-## Quickstart & CLI Commands
+## Running the Dashboard
 
-### ⚡ Quick Start (One Command)
 ```bash
-# Default (Binance DOGEUSDT):
 ./run.sh
-
-# Or any CoinDCX pair (auto-builds decision tree if model doesn't exist, then streams live):
-./run.sh --symbol B-DOGE_USDT
-./run.sh --symbol B-SOL_USDT
-./run.sh --symbol I-BTC_INR
 ```
 
-### 1. Modular Decision Tree Builder (`futurecast build`)
-Paste or specify **ANY symbol** from CoinDCX or Binance. The engine automatically:
-1. Detects the exchange (`coindcx` or `binance`)
-2. Resolves primary and secondary benchmark assets (e.g. `B-BTC_USDT`/`B-ETH_USDT` or `I-BTC_INR`)
-3. Fetches paginated klines with transparent disk caching in `.cache/`
-4. Computes the 35 core cross-asset and microstructure features
-5. Formulates 15m residual alpha targets and runs Purged Walk-Forward CV (or 80/20 train/val split)
-6. Trains and saves the LightGBM model to `models/lightgbm_<symbol>_residual_alpha.txt`
+That starts the dashboard on **http://127.0.0.1:8000**. `./run.sh` is a thin wrapper around the
+`futurecast` command, so these are equivalent:
 
 ```bash
-# Build decision tree for any CoinDCX symbol:
-uv run futurecast build --symbol B-DOGE_USDT --days 7
-uv run futurecast build --symbol B-SOL_USDT --days 14
-
-# Build decision tree for any Binance symbol:
-uv run futurecast build --symbol DOGEUSDT --days 14
+uv run futurecast                    # same as ./run.sh
+uv run futurecast --port 8002        # or: PORT=8002 ./run.sh
+uv run futurecast --host 0.0.0.0     # listen on every interface
+uv run futurecast --offline          # simulated candles, no network (no training)
 ```
 
-### 2. Ingestion & Local Disk Caching (.cache/)
-```bash
-# Ingest live public market data
-uv run futurecast ingest --days 30
+`futurecast web` is still accepted and does the same thing.
 
-# Inspect or clear the .cache/ folder
-uv run futurecast cache
-uv run futurecast cache --clear
-
-# Or generate realistic synthetic data for offline testing
-uv run futurecast ingest --synthetic --days 35
-```
-
-### 2. Feature Generation & Stationarity Audit
-```bash
-uv run futurecast features --audit
-```
-
-### 3. Purged Walk-Forward Cross-Validation
-```bash
-uv run futurecast validate
-```
-
-### 4. Production Model Training
-```bash
-uv run futurecast train --output-model models/lightgbm_doge_residual_alpha.txt
-```
-
-### 5. Real-Time Multi-Coin Web Terminal (`futurecast web`)
-
-Launch the local interactive Web UI dashboard to stream real-time signals across multiple coins concurrently:
-
-```bash
-# Launch Web UI on http://127.0.0.1:8000 (or via ./run.sh --web):
-uv run futurecast web
-./run.sh --web
-
-# Custom host, port, or initial coin list:
-uv run futurecast web --port 8000 --symbols B-DOGE_USDT,B-SOL_USDT,B-BLUR_USDT,DOGEUSDT
-```
+In the dashboard, add any CoinDCX futures pair (e.g. `B-DOGE_USDT`, `B-SOL_USDT`). New coins are
+trained automatically from their real candle history and can be retrained from the dashboard.
+Tracked coins are remembered in `data/tracked_symbols.json`, trained models are saved under
+`models/`, and every forecast is appended to `logs/forecasts/`.
 
 **Key Features of the Web Terminal:**
-- **Dynamic Coin Management**: Add any symbol on the fly (e.g. `B-DOGE_USDT`, `PEPEUSDT`, `B-SOL_USDT`, `I-BTC_INR`) with automatic exchange detection and sector routing.
+- **Dynamic Coin Management**: Add any CoinDCX futures pair on the fly (e.g. `B-DOGE_USDT`, `B-SOL_USDT`, `I-BTC_INR`) with automatic sector routing.
 - **Grouped Coin Cards & Multi-Model Breakdown**: Each symbol has its own grouped section displaying real-time price, benchmark price, 15m residual alpha, and a nested table with rows for all predictive models (`LightGBM`, `XGBoost`, `CatBoost`, and `Consensus Ensemble`).
 - **Cross-Verification Concordance**: Displays real-time model agreement scores (e.g. `100% Agreement (3/3 Models Bullish)` vs `⚠ Divergence Warning`).
 - **Microstructure Telemetry Strip**: Real-time Parkinson Volatility, Relative Volume Ratio (RVR), Funding Rate Basis, and Order Flow Imbalance (OFI).
 
 ---
 
-### 6. Dynamic Sector Benchmarks
+### Dynamic Sector Benchmarks
 
 The system dynamically routes category leaders based on token taxonomy:
 
@@ -176,7 +126,7 @@ The system dynamically routes category leaders based on token taxonomy:
 
 ---
 
-### 7. Multi-Model Cross-Verification Suite
+### Multi-Model Cross-Verification Suite
 
 Combines three distinct gradient boosting architectures to eliminate single-model bias and reject flash liquidation noise:
 - **LightGBM**: Fast leaf-wise tree growth with Huber / L1 objective.
@@ -186,7 +136,7 @@ Combines three distinct gradient boosting architectures to eliminate single-mode
 
 ---
 
-### 8. Run Test Suite (32/32 Passing)
+### Run the Test Suite
 ```bash
 uv run pytest -v
 ```

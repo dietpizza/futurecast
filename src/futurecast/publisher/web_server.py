@@ -13,12 +13,30 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 import uvicorn
 
+from fastapi.staticfiles import StaticFiles
+
 from futurecast.config import load_config
 from futurecast.publisher.multi_manager import MultiCoinStreamManager
 
 logger = logging.getLogger(__name__)
 
-HTML_PATH = Path(__file__).parent / "web" / "index.html"
+WEB_DIR = Path(__file__).parent / "web"
+HTML_PATH = WEB_DIR / "index.html"
+STATIC_DIR = WEB_DIR / "static"
+
+
+class RevalidatingStaticFiles(StaticFiles):
+    """Static files the browser must revalidate on every load (cheap 304 via ETag).
+
+    Without an explicit Cache-Control, browsers heuristically cache assets based on
+    their Last-Modified age, so an older stylesheet can be served stale alongside
+    freshly edited ones and break the UI.
+    """
+
+    async def get_response(self, path: str, scope: Any) -> Any:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 class AddCoinRequest(BaseModel):
@@ -31,21 +49,30 @@ def create_app(
     initial_symbols: Optional[List[str]] = None,
     live_mode: bool = True,
     poll_interval: float = 3.0,
+    persistence_path: Optional[str | Path] = "data/tracked_symbols.json",
+    models_dir: str | Path = "models",
 ) -> FastAPI:
     """Create and configure the FastAPI web application."""
     config = load_config()
     config.enforce_zero_execution_policy()
-    manager = MultiCoinStreamManager(config=config)
+    manager = MultiCoinStreamManager(
+        config=config, models_dir=str(models_dir), persistence_path=persistence_path, live=live_mode
+    )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Startup: populate initial symbols
-        symbols = initial_symbols or ["B-DOGE_USDT", "B-SOL_USDT", "B-BLUR_USDT", "B-AVA_USDT", "DOGEUSDT"]
+        # Startup: populate initial symbols (CoinDCX only)
+        # Priority: explicit CLI initial_symbols -> saved symbols -> default presets
+        saved = manager.load_persisted_symbols() if initial_symbols is None else None
+        default_symbols = ["B-DOGE_USDT", "B-SOL_USDT", "B-PEPE_USDT", "B-BLUR_USDT", "B-AVA_USDT", "B-TRUTH_USDT"]
+        symbols = initial_symbols or (saved if saved else default_symbols)
         for s in symbols:
             try:
-                manager.add_symbol(s)
+                manager.add_symbol(s, persist=False)
             except Exception as e:
                 logger.warning(f"Could not initialize symbol {s}: {e}")
+        # Persist loaded active coins
+        manager.persist_symbols()
 
         # Start background streaming task
         streaming_task = asyncio.create_task(
@@ -62,12 +89,15 @@ def create_app(
 
     app = FastAPI(
         title="futurecast Real-Time Forecaster",
-        description="Air-Gapped Multi-Model Residual Alpha Forecasting Engine",
+        description="Multi-Model Residual Alpha Forecasting Engine",
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
     )
     app.state.manager = manager
+
+    if STATIC_DIR.exists():
+        app.mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", response_class=HTMLResponse)
     async def get_index() -> HTMLResponse:
@@ -75,7 +105,7 @@ def create_app(
             return HTMLResponse("<h1>Web UI template missing</h1>", status_code=500)
         with open(HTML_PATH, "r", encoding="utf-8") as f:
             content = f.read()
-        return HTMLResponse(content)
+        return HTMLResponse(content, headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/status")
     async def get_status() -> Dict[str, Any]:
@@ -89,9 +119,15 @@ def create_app(
         }
 
     @app.get("/api/coins")
-    async def get_coins() -> List[Dict[str, Any]]:
+    async def get_coins(timeframe: str = "15m") -> List[Dict[str, Any]]:
         mgr: MultiCoinStreamManager = app.state.manager
-        return mgr.get_snapshot()
+        return mgr.get_snapshot(timeframe=timeframe)
+
+    @app.get("/api/coindcx/futures")
+    async def get_coindcx_futures(q: Optional[str] = None, sector: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Return searchable catalog of verified CoinDCX futures pairs and metadata."""
+        from futurecast.ingestion.coindcx_catalog import get_coindcx_futures_catalog
+        return get_coindcx_futures_catalog(query=q, sector=sector)
 
     @app.post("/api/coins")
     async def add_coin(req: AddCoinRequest) -> Dict[str, Any]:
@@ -99,12 +135,21 @@ def create_app(
         sym = req.symbol.strip().upper()
         if not sym:
             raise HTTPException(status_code=400, detail="Invalid symbol")
-        worker = mgr.add_symbol(sym, exchange=req.exchange)
+        
+        # Enforce CoinDCX symbols only (B- or I- or containing _)
+        from futurecast.ingestion.factory import detect_exchange
+        if detect_exchange(sym) != "coindcx":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Only CoinDCX symbols are supported (e.g. B-DOGE_USDT, B-SOL_USDT, B-PEPE_USDT, I-BTC_INR). Received '{sym}'."
+            )
+
+        worker = mgr.add_symbol(sym, exchange="coindcx")
         snapshot = mgr.get_snapshot()
 
-        # Trigger automatic background training if custom model not yet trained
-        if req.auto_train and not worker.is_custom_trained:
-            asyncio.create_task(mgr.train_symbol_models(worker.symbol, days=7))
+        # Train in the background (one coin at a time) if this coin has no models yet
+        if req.auto_train and mgr.live and not worker.is_custom_trained:
+            mgr.schedule_training(worker.symbol)
 
         # Find the snapshot for this symbol
         for item in snapshot:
@@ -122,8 +167,8 @@ def create_app(
         sym = symbol.strip().upper()
         if sym not in mgr.workers:
             raise HTTPException(status_code=404, detail="Coin not tracked")
-        asyncio.create_task(mgr.train_symbol_models(sym, days=7))
-        return {"status": "training_started", "symbol": sym}
+        mgr.schedule_training(sym)
+        return {"status": "training_queued", "symbol": sym}
 
     @app.delete("/api/coins/{symbol}")
     async def delete_coin(symbol: str) -> Dict[str, Any]:
@@ -154,8 +199,8 @@ def create_app(
                     action = payload.get("action")
                     if action == "add_coin":
                         sym = payload.get("symbol", "").strip().upper()
-                        if sym:
-                            mgr.add_symbol(sym)
+                        if sym and detect_exchange(sym) == "coindcx":
+                            mgr.add_symbol(sym, exchange="coindcx")
                     elif action == "remove_coin":
                         sym = payload.get("symbol", "").strip().upper()
                         if sym:
@@ -177,9 +222,15 @@ def run_web_server(
     symbols: Optional[List[str]] = None,
     live: bool = True,
     poll_interval: float = 3.0,
+    persistence_path: Optional[str | Path] = "data/tracked_symbols.json",
 ) -> None:
     """Launch the Web UI server."""
-    app = create_app(initial_symbols=symbols, live_mode=live, poll_interval=poll_interval)
+    app = create_app(
+        initial_symbols=symbols,
+        live_mode=live,
+        poll_interval=poll_interval,
+        persistence_path=persistence_path,
+    )
     print(f"\n⚡ futurecast Web UI running at: http://{host}:{port}")
-    print(f"🛡️  Air-Gapped Mode: STRICTLY ZERO ORDER EXECUTION\n")
+    print(f"🛡️  Safety: STRICTLY ZERO ORDER EXECUTION\n")
     uvicorn.run(app, host=host, port=port, log_level="warning")

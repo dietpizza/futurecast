@@ -1,11 +1,8 @@
-"""Exchange client factory and symbol resolution utilities."""
+"""Exchange detection and symbol resolution utilities."""
 
 from __future__ import annotations
 
-from typing import List, Optional, Union
-from futurecast.ingestion.binance import BinancePublicClient
-from futurecast.ingestion.coindcx import CoinDCXPublicClient
-from futurecast.ingestion.cache import DataCache
+from typing import List, Optional
 
 
 def detect_exchange(symbol: str) -> str:
@@ -61,6 +58,10 @@ SECTOR_MAP: Dict[str, str] = {
     "HBAR": "L1",
     "NEAR": "L1",
     "TRX": "L1",
+    "ZK": "L1",
+    "ARB": "L1",
+    "OP": "L1",
+    "STRK": "L1",
 
     # DeFi (Decentralized Finance) -> Sector Leader: ETH
     "ETH": "DEFI",
@@ -212,18 +213,3 @@ def sanitize_symbol_for_filename(symbol: str) -> str:
     """Convert symbol to safe filename string (e.g. 'B-DOGE_USDT' -> 'coindcx_b_doge_usdt')."""
     clean = symbol.lower().replace("-", "_").replace(":", "_")
     return clean
-
-
-def get_exchange_client(
-    exchange: str = "binance",
-    cache: Optional[DataCache] = None,
-    timeout: int = 15,
-) -> Union[BinancePublicClient, CoinDCXPublicClient]:
-    """Instantiate the appropriate public read-only market data client."""
-    ex = exchange.lower().strip()
-    if ex == "coindcx":
-        return CoinDCXPublicClient(timeout=timeout, cache=cache)
-    elif ex == "binance":
-        return BinancePublicClient(timeout=timeout, cache=cache)
-    else:
-        raise ValueError(f"Unsupported exchange '{exchange}'. Supported: 'binance', 'coindcx'")

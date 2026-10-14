@@ -12,12 +12,12 @@ from futurecast.config import AppConfig
 from futurecast.engine.calibration import SignalCalibrator
 from futurecast.engine.drift import DriftMonitor
 from futurecast.features.pipeline import FeaturePipeline
+from futurecast.features.shitcoin import is_high_beta_shitcoin, evaluate_shitcoin_microstructure
 from futurecast.ingestion.factory import get_symbol_sector
-from futurecast.models.trainer import ModelTrainer
-from futurecast.schema import ForecastEvent, ModelForecastItem, CrossVerificationSummary, SignalState
+from futurecast.schema import ForecastEvent, SignalState
 
 if TYPE_CHECKING:
-    from futurecast.models.ensemble import MultiModelEnsemble
+    from futurecast.models.ensemble import LightGBMAlphaModel, MultiModelEnsemble
     from futurecast.publisher.broadcaster import SignalBroadcaster
 
 logger = logging.getLogger(__name__)
@@ -32,11 +32,13 @@ class PureForecastEngine:
     def __init__(
         self,
         config: AppConfig,
-        trainer: Union[ModelTrainer, MultiModelEnsemble],
+        trainer: Union[LightGBMAlphaModel, MultiModelEnsemble],
         feature_pipeline: FeaturePipeline,
         broadcaster: Optional[Any] = None,
         min_buffer_size: int = 1440,
         ensemble: Optional[MultiModelEnsemble] = None,
+        max_buffer_size: Optional[int] = None,
+        bar_minutes: int = 1,
     ) -> None:
         # Enforce zero-execution policy
         config.enforce_zero_execution_policy()
@@ -57,9 +59,45 @@ class PureForecastEngine:
             horizon_bars=config.features.target.horizon_min
         )
         self.min_buffer_size = min_buffer_size
+        self.max_buffer_size = max_buffer_size or min_buffer_size * 2
+        self.bar_minutes = bar_minutes
         self._bar_buffer = pd.DataFrame()
+        # Latest state, kept so trade risk can be refreshed between candles
+        self.last_features: Optional[pd.DataFrame] = None
+        self.last_event: Optional[ForecastEvent] = None
+        self._last_ctx: Dict[str, Any] = {}
 
-    def feed_bars(self, aligned_df_slice: pd.DataFrame) -> Optional[ForecastEvent]:
+    def reset(self) -> None:
+        """Drop buffered candles and z-score history (e.g. after a data gap or retrain)."""
+        self._bar_buffer = pd.DataFrame()
+        self.calibrator.reset()
+        self.last_features = None
+        self.last_event = None
+
+    def refresh_trade_risk(self, orderbook_depth: Optional[Dict[str, Any]]) -> Optional[ForecastEvent]:
+        """Recompute long/short trade risk with a fresh order book, without a new candle."""
+        ev = self.last_event
+        if ev is None or self.last_features is None:
+            return None
+        from futurecast.features.trade_risk import evaluate_trade_risk
+        ev.orderbook_depth = orderbook_depth or {}
+        ev.trade_risk = evaluate_trade_risk(
+            df=self._bar_buffer,
+            target_symbol=ev.symbol,
+            features=self.last_features,
+            microstructure_ctx=self._last_ctx,
+            expected_residual_alpha_bps=ev.expected_residual_alpha_15m_bps,
+            sector=ev.sector,
+            orderbook_ctx=ev.orderbook_depth,
+            bar_minutes=self.bar_minutes,
+        )
+        return ev
+
+    def feed_bars(
+        self,
+        aligned_df_slice: pd.DataFrame,
+        orderbook_depth: Optional[Dict[str, Any]] = None,
+    ) -> Optional[ForecastEvent]:
         """Ingest new aligned 1-minute bars and generate forecast on the latest closed bar."""
         if aligned_df_slice.empty:
             return None
@@ -72,9 +110,8 @@ class PureForecastEngine:
             self._bar_buffer = self._bar_buffer[~self._bar_buffer.index.duplicated(keep="last")]
 
         # Ensure buffer doesn't grow unbounded
-        max_buffer = self.min_buffer_size * 2
-        if len(self._bar_buffer) > max_buffer:
-            self._bar_buffer = self._bar_buffer.iloc[-max_buffer:]
+        if len(self._bar_buffer) > self.max_buffer_size:
+            self._bar_buffer = self._bar_buffer.iloc[-self.max_buffer_size:]
 
         if len(self._bar_buffer) < self.min_buffer_size:
             logger.info(f"Warming up buffer: {len(self._bar_buffer)}/{self.min_buffer_size} bars...")
@@ -83,6 +120,7 @@ class PureForecastEngine:
         # Compute point-in-time features on buffer
         features = self.feature_pipeline.generate_features(self._bar_buffer)
         latest_features = features.iloc[[-1]]
+        self.last_features = features
 
         # Current prices and timestamp
         latest_timestamp = self._bar_buffer.index[-1]
@@ -105,49 +143,16 @@ class PureForecastEngine:
             current_bench_price=curr_bench_price,
         )
 
-        # Predict residual alpha: check if multi-model ensemble is present
-        if hasattr(self.trainer, "get_cross_verification"):
-            expected_bps, z_score, signal_state, conf_pct, model_items, cv_summary = (
-                self.trainer.get_cross_verification(
-                    latest_features=latest_features,
-                    beta=beta,
-                    calibrator=self.calibrator,
-                )
+        # Predict residual alpha with multi-model cross-verification
+        ensemble = self.ensemble if self.ensemble is not None else self.trainer
+        expected_bps, z_score, signal_state, conf_pct, model_items, cv_summary = (
+            ensemble.get_cross_verification(
+                latest_features=latest_features,
+                beta=beta,
+                calibrator=self.calibrator,
             )
-            raw_pred = expected_bps / 10000.0
-        elif self.ensemble is not None:
-            expected_bps, z_score, signal_state, conf_pct, model_items, cv_summary = (
-                self.ensemble.get_cross_verification(
-                    latest_features=latest_features,
-                    beta=beta,
-                    calibrator=self.calibrator,
-                )
-            )
-            raw_pred = expected_bps / 10000.0
-        else:
-            raw_pred = float(self.trainer.predict(latest_features)[0])
-            expected_bps, z_score, signal_state, conf_pct = self.calibrator.calibrate(
-                raw_pred=raw_pred,
-                beta_hedge_ratio=beta,
-            )
-            model_items = {
-                "LightGBM": ModelForecastItem(
-                    model_name="LightGBM",
-                    expected_residual_alpha_bps=expected_bps,
-                    z_score=z_score,
-                    signal=signal_state,
-                    confidence_percentile=conf_pct,
-                )
-            }
-            cv_summary = CrossVerificationSummary(
-                concordance=1.0,
-                consensus_signal=signal_state,
-                models_count=1,
-                bullish_count=1 if signal_state == SignalState.BULLISH_RESIDUAL else 0,
-                bearish_count=1 if signal_state == SignalState.BEARISH_RESIDUAL else 0,
-                neutral_count=1 if signal_state == SignalState.NEUTRAL else 0,
-                dispersion_bps=0.0,
-            )
+        )
+        raw_pred = expected_bps / 10000.0
 
         # Microstructure context
         ctx = {}
@@ -157,6 +162,45 @@ class PureForecastEngine:
                 ctx[col] = float(val) if not np.isnan(val) else 0.0
 
         sector = get_symbol_sector(target_symbol)
+
+        # High-Beta Shitcoin Strategy (strictly only for shitcoins; big vol coins unaffected)
+        if is_high_beta_shitcoin(target_symbol, sector):
+            shitcoin_metrics = evaluate_shitcoin_microstructure(
+                df=self._bar_buffer,
+                target_symbol=target_symbol,
+                sector=sector,
+                leader_symbol=bench_symbol,
+            )
+            ctx.update(shitcoin_metrics)
+            alpha_boost = shitcoin_metrics.get("shitcoin_alpha_boost_bps", 0.0)
+            if alpha_boost != 0.0:
+                expected_bps = round(expected_bps + alpha_boost, 2)
+                # Directional confirmation
+                if expected_bps > 15.0 and z_score > 0.8:
+                    signal_state = SignalState.BULLISH_RESIDUAL
+                elif expected_bps < -15.0 and z_score < -0.8:
+                    signal_state = SignalState.BEARISH_RESIDUAL
+            if shitcoin_metrics.get("shitcoin_regime") == "DORMANT_CHOP":
+                expected_bps = round(expected_bps * 0.5, 2)
+                if abs(expected_bps) < 12.0:
+                    signal_state = SignalState.NEUTRAL
+        else:
+            ctx["is_shitcoin_strategy_active"] = False
+
+        # Real-time Long / Short Trade Risk and Liquidation Hazard Evaluation
+        from futurecast.features.trade_risk import evaluate_trade_risk
+        ob_data = orderbook_depth or {}
+        risk_metrics = evaluate_trade_risk(
+            df=self._bar_buffer,
+            target_symbol=target_symbol,
+            features=latest_features,
+            microstructure_ctx=ctx,
+            expected_residual_alpha_bps=expected_bps,
+            sector=sector,
+            orderbook_ctx=ob_data,
+            bar_minutes=self.bar_minutes,
+        )
+        self._last_ctx = ctx
 
         event = ForecastEvent(
             timestamp=latest_timestamp,
@@ -170,6 +214,8 @@ class PureForecastEngine:
             signal=signal_state,
             confidence_percentile=conf_pct,
             microstructure_context=ctx,
+            trade_risk=risk_metrics,
+            orderbook_depth=ob_data,
             execution_disabled=True,
             model_predictions=model_items,
             cross_verification=cv_summary,
@@ -187,4 +233,5 @@ class PureForecastEngine:
 
         # Broadcast event
         self.broadcaster.broadcast(event)
+        self.last_event = event
         return event

@@ -54,9 +54,13 @@ def compute_microstructure_features(
     for w in volume_z_windows:
         out[f"volume_zscore_{w}m"] = compute_volume_zscore(t_vol, window=w)
 
-    # 2. Relative Volume Ratio (RVR) to BTC
-    vol_ratio = t_vol / b_vol.replace(0.0, np.nan)
-    out[f"relative_volume_ratio_{rvr_window}m"] = vol_ratio.rolling(rvr_window, min_periods=5).mean().fillna(1.0)
+    # 2. Relative Volume Ratio (RVR) normalized by quote volume
+    t_quote = df[f"{target_symbol}_quote_volume"] if f"{target_symbol}_quote_volume" in df.columns else (t_vol * t_close)
+    b_quote = df[f"{benchmark_symbol}_quote_volume"] if f"{benchmark_symbol}_quote_volume" in df.columns else (b_vol * b_close)
+    raw_ratio = t_quote / b_quote.replace(0.0, np.nan)
+    rolling_baseline = raw_ratio.rolling(rvr_window * 4, min_periods=5).mean()
+    norm_rvr = (raw_ratio / rolling_baseline.replace(0.0, np.nan)).fillna(1.0)
+    out[f"relative_volume_ratio_{rvr_window}m"] = norm_rvr.rolling(rvr_window, min_periods=5).mean().clip(0.05, 25.0).fillna(1.0)
 
     # 3. Parkinson Realized Volatility for DOGE (15m, 60m, 240m)
     for w in parkinson_windows:

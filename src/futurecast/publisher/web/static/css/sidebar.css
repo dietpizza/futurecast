@@ -1,0 +1,268 @@
+/* Add-pair drawer (CoinDCX futures catalog) */
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  background: var(--backdrop);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease, visibility 0.2s ease;
+}
+
+.sidebar-backdrop.active {
+  opacity: 1;
+  visibility: visible;
+}
+
+.coindcx-sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9995;
+  width: 420px;
+  max-width: 100vw;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-drawer);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1), visibility 0.25s;
+}
+
+.coindcx-sidebar.open {
+  transform: translateX(0);
+  visibility: visible;
+}
+
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 16px 12px 20px;
+}
+
+.sidebar-title-group {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.sidebar-title {
+  font-size: 16px;
+  font-weight: 650;
+}
+
+.sidebar-count {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.sidebar-search-box {
+  padding: 0 20px 12px;
+}
+
+.search-input-wrapper {
+  position: relative;
+}
+
+.search-icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-faint);
+  pointer-events: none;
+}
+
+.sidebar-search-input {
+  width: 100%;
+  height: 38px;
+  padding: 0 36px 0 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.sidebar-search-input::placeholder {
+  color: var(--text-faint);
+}
+
+.sidebar-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.clear-search-btn {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: none;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.clear-search-btn:hover {
+  background: var(--neu-soft);
+  color: var(--text);
+}
+
+.sidebar-filter-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 0 20px 12px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-filter-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.sidebar-tab-btn {
+  flex: none;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.sidebar-tab-btn:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-muted);
+}
+
+.sidebar-tab-btn.active {
+  background: var(--inverse-bg);
+  border-color: var(--inverse-bg);
+  color: var(--inverse-text);
+}
+
+.sidebar-coin-list {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sidebar-coin {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 20px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-coin:hover {
+  background: var(--surface-hover);
+}
+
+.sidebar-coin-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-coin-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sidebar-symbol {
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.sidebar-name {
+  font-size: 13px;
+  color: var(--text-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-sector {
+  margin-left: auto;
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.sidebar-desc {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-coin-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+
+.sidebar-coin-actions .icon-btn {
+  width: 28px;
+  height: 28px;
+}
+
+.btn-add-coin {
+  min-width: 64px;
+  justify-content: center;
+}
+
+.btn-add-coin.is-added,
+.btn-add-coin.is-added:hover {
+  background: transparent;
+  border-color: transparent;
+  color: var(--pos);
+  cursor: default;
+}
+
+.sidebar-empty-state {
+  padding: 40px 24px;
+  text-align: center;
+}
+
+.sidebar-empty-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.sidebar-empty-state p {
+  margin: 4px 0 16px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.sidebar-list-note {
+  padding: 12px 20px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  text-align: center;
+}

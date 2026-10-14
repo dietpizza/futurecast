@@ -48,25 +48,3 @@ def compute_regression_metrics(
         "mae": mae,
         "hit_rate": hit_rate,
     }
-
-
-def compute_theoretical_long_short_sharpe(
-    predictions: pd.Series,
-    realized_residual: pd.Series,
-    threshold: float = 0.0,
-    annualization_factor: float = np.sqrt(365 * 24 * 4),  # 15m intervals per year
-) -> float:
-    """Evaluate theoretical friction-free Sharpe ratio of an alpha signal:
-    
-    Position = sign(predictions) if |predictions| > threshold else 0
-    Return = Position * realized_residual
-    """
-    signal = np.where(predictions > threshold, 1.0, np.where(predictions < -threshold, -1.0, 0.0))
-    strat_ret = signal * realized_residual
-    mean_ret = strat_ret.mean()
-    std_ret = strat_ret.std()
-
-    if std_ret == 0 or np.isnan(std_ret):
-        return 0.0
-
-    return float((mean_ret / std_ret) * annualization_factor)

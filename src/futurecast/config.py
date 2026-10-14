@@ -101,21 +101,6 @@ class LightGBMConfig(BaseModel):
     early_stopping_rounds: int = 50
 
 
-class ValidationConfig(BaseModel):
-    train_window_days: int = 120
-    test_window_days: int = 30
-    step_window_days: int = 30
-    purge_window_minutes: int = 60
-    embargo_window_minutes: int = 1440
-    min_acceptable_ic: float = 0.03
-
-
-class OptunaConfig(BaseModel):
-    n_trials: int = 40
-    timeout_seconds: int = 3600
-    study_name: str = "lightgbm_residual_alpha"
-
-
 class ForecastingConfig(BaseModel):
     zscore_window_minutes: int = 1440
     signal_threshold_z: float = 1.5
@@ -128,8 +113,6 @@ class AppConfig(BaseModel):
     assets: AssetsConfig
     features: FeaturesConfig
     model: LightGBMConfig
-    validation: ValidationConfig
-    optuna: OptunaConfig
     forecasting: ForecastingConfig
 
     def enforce_zero_execution_policy(self) -> None:
@@ -162,16 +145,12 @@ def load_config(config_dir: str | Path = "config") -> AppConfig:
     features = FeaturesConfig(**features_raw) if features_raw else FeaturesConfig()
     
     model = LightGBMConfig(**(model_raw.get("lightgbm", {})))
-    validation = ValidationConfig(**(model_raw.get("validation", {})))
-    optuna = OptunaConfig(**(model_raw.get("optuna", {})))
     forecasting = ForecastingConfig(**(model_raw.get("forecasting", {})))
 
     app_cfg = AppConfig(
         assets=assets,
         features=features,
         model=model,
-        validation=validation,
-        optuna=optuna,
         forecasting=forecasting,
     )
     app_cfg.enforce_zero_execution_policy()

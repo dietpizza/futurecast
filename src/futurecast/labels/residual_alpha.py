@@ -1,4 +1,4 @@
-"""Target formulation and labeling engine (Residual Alpha & Triple Barrier)."""
+"""Residual alpha target formulation."""
 
 from __future__ import annotations
 
@@ -46,50 +46,7 @@ def compute_residual_alpha_target(
         var = r_b.rolling(1440, min_periods=30).var()
         beta = cov / var.replace(0.0, np.nan)
 
-    # Backfill beta for warmup window so early bars have a sensible beta hedge ratio
-    beta = beta.bfill().fillna(1.0)
+    # Bars before the beta window has data get no target (backfilling would leak later betas)
 
     residual_alpha = fwd_r_target - (beta * fwd_r_bench)
     return residual_alpha.rename(f"target_residual_alpha_{horizon_minutes}m")
-
-
-def compute_triple_barrier_labels(
-    prices: pd.Series,
-    atr: pd.Series,
-    multiplier: float = 1.8,
-    max_holding_bars: int = 30,
-) -> pd.Series:
-    """Compute volatility-adjusted triple barrier classification labels:
-    
-    +1: Upper barrier hit first (Take-Profit)
-    -1: Lower barrier hit first (Stop-Loss)
-     0: Vertical time barrier reached (Chop / Timeout)
-    """
-    labels = pd.Series(index=prices.index, dtype=float)
-    n = len(prices)
-    price_vals = prices.values
-    atr_vals = atr.values
-
-    for i in range(n - max_holding_bars):
-        p0 = price_vals[i]
-        curr_atr = atr_vals[i]
-        if np.isnan(p0) or np.isnan(curr_atr) or curr_atr <= 0:
-            continue
-
-        upper_barrier = p0 + multiplier * curr_atr
-        lower_barrier = p0 - multiplier * curr_atr
-
-        window_prices = price_vals[i + 1 : i + 1 + max_holding_bars]
-        label = 0.0
-
-        for p in window_prices:
-            if p >= upper_barrier:
-                label = 1.0
-                break
-            elif p <= lower_barrier:
-                label = -1.0
-                break
-
-        labels.iloc[i] = label
-
-    return labels.rename("target_triple_barrier")

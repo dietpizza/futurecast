@@ -1,0 +1,83 @@
+/* Floating tooltip */
+
+.fc-tooltip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 99999;
+  pointer-events: none;
+  width: max-content;
+  max-width: 280px;
+  padding: 8px 11px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font);
+  font-size: 12.5px;
+  line-height: 1.45;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(4px);
+  transition: opacity 0.12s ease-out, transform 0.12s ease-out, visibility 0s linear 0.12s;
+}
+
+.fc-tooltip[data-side="bottom"] {
+  transform: translateY(-4px);
+}
+
+.fc-tooltip.visible {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+  transition: opacity 0.12s ease-out, transform 0.12s ease-out, visibility 0s;
+}
+
+.fc-tooltip-title {
+  margin-bottom: 2px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.fc-tooltip-title[hidden] {
+  display: none;
+}
+
+.fc-tooltip-body {
+  color: var(--text-2);
+  white-space: pre-line;
+  font-variant-numeric: tabular-nums;
+}
+
+.fc-tooltip-arrow {
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  margin-left: -5px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+
+.fc-tooltip[data-side="top"] .fc-tooltip-arrow {
+  bottom: -5px;
+  border-top: 0;
+  border-left: 0;
+}
+
+.fc-tooltip[data-side="bottom"] .fc-tooltip-arrow {
+  top: -5px;
+  border-bottom: 0;
+  border-right: 0;
+}
+
+.fc-tooltip[data-side="none"] .fc-tooltip-arrow {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-tooltip,
+  .fc-tooltip[data-side="bottom"] {
+    transform: none;
+  }
+}
