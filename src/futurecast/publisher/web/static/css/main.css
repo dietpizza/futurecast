@@ -41,6 +41,12 @@
   --backdrop: rgba(17, 24, 39, 0.28);
   --focus-ring: rgba(37, 99, 235, 0.15);
 
+  /* Open watchlist card: accent-tinted versions of the tokens above (follow the theme) */
+  --open-bg: color-mix(in srgb, var(--accent) 5%, var(--surface));
+  --open-hover: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  --open-well: color-mix(in srgb, var(--accent) 5%, var(--well));
+  --open-border: color-mix(in srgb, var(--accent) 35%, var(--border));
+
   --radius: 10px;
   --radius-sm: 6px;
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
@@ -444,12 +450,8 @@ a {
 
 /* ───────── Watchlist ───────── */
 
-.watchlist {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
-}
+/* The list's box is drawn by the head and each row rather than by .watchlist, so an open
+   row can step out of it as its own card, with the rows around it closing off their groups. */
 
 .list-head,
 .row-main {
@@ -466,7 +468,7 @@ a {
   z-index: 10;
   height: 38px;
   background: var(--surface-muted);
-  border-bottom: 1px solid var(--border);
+  border: 1px solid var(--border);
   border-radius: var(--radius) var(--radius) 0 0;
   font-size: 11.5px;
   font-weight: 600;
@@ -483,12 +485,45 @@ a {
 }
 
 .coin-row {
-  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 0;
+  box-shadow: var(--shadow-sm);
+  overflow: clip; /* row and detail backgrounds follow the rounded corners */
+  transition: margin 0.15s ease, box-shadow 0.15s ease;
 }
 
 .coin-row:last-child {
-  border-bottom: 0;
-  border-radius: 0 0 var(--radius) var(--radius);
+  border-bottom-left-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+}
+
+.coin-row.is-open {
+  margin: 14px 0;
+  background: var(--open-bg);
+  border: 1px solid var(--open-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-md);
+}
+
+.coin-row.is-open:last-child {
+  margin-bottom: 0;
+}
+
+/* Rows either side of an open card become the ends of their own groups */
+.coin-row.is-open + .coin-row:not(.is-open) {
+  border-top: 1px solid var(--border);
+  border-top-left-radius: var(--radius);
+  border-top-right-radius: var(--radius);
+}
+
+.coin-row:has(+ .coin-row.is-open) {
+  border-bottom-left-radius: var(--radius);
+  border-bottom-right-radius: var(--radius);
+}
+
+.watchlist:has(.coin-row.is-open:first-child) .list-head {
+  border-radius: var(--radius);
 }
 
 .row-main {
@@ -504,11 +539,11 @@ a {
 }
 
 .coin-row.is-open .row-main {
-  background: var(--surface-hover);
+  background: transparent;
 }
 
-.coin-row:last-child:not(.is-open) .row-main {
-  border-radius: 0 0 var(--radius) var(--radius);
+.coin-row.is-open .row-main:hover {
+  background: var(--open-hover);
 }
 
 .cell-sub {
@@ -750,6 +785,11 @@ a {
 
 .row-details[hidden] {
   display: none;
+}
+
+.coin-row.is-open .row-details {
+  background: var(--open-well);
+  border-top-color: var(--open-border);
 }
 
 .details-grid {
