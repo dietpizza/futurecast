@@ -1,7 +1,7 @@
 """Ingestion package initialization."""
 
 from futurecast.ingestion.synthetic import generate_synthetic_data
-from futurecast.ingestion.coindcx import CoinDCXPublicClient
+from futurecast.ingestion.binance import BinanceMarket, BinancePublicClient, binance_candidates
 from futurecast.ingestion.storage import align_cross_asset_data
 from futurecast.ingestion.cache import DataCache
 from futurecast.ingestion.factory import (
@@ -15,7 +15,9 @@ from futurecast.ingestion.factory import (
 )
 
 __all__ = [
-    "CoinDCXPublicClient",
+    "BinanceMarket",
+    "BinancePublicClient",
+    "binance_candidates",
     "generate_synthetic_data",
     "align_cross_asset_data",
     "DataCache",

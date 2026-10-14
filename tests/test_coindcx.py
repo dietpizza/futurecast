@@ -1,11 +1,5 @@
-"""Tests for CoinDCX integration, exchange detection, and benchmark routing."""
+"""Tests for CoinDCX symbol handling: exchange detection and benchmark routing."""
 
-from unittest.mock import MagicMock, patch
-import pandas as pd
-import pytest
-
-from futurecast.ingestion.cache import DataCache
-from futurecast.ingestion.coindcx import CoinDCXPublicClient
 from futurecast.ingestion.factory import (
     detect_exchange,
     resolve_benchmarks,
@@ -71,92 +65,4 @@ def test_sanitize_symbol() -> None:
     assert sanitize_symbol_for_filename("B-DOGE_USDT") == "b_doge_usdt"
     assert sanitize_symbol_for_filename("I-BTC_INR") == "i_btc_inr"
     assert sanitize_symbol_for_filename("DOGEUSDT") == "dogeusdt"
-
-
-def test_coindcx_fetch_klines_mock(tmp_path) -> None:
-    cache = DataCache(cache_dir=str(tmp_path), enabled=True)
-    client = CoinDCXPublicClient(cache=cache)
-
-    mock_candles = [
-        {"open": 0.08, "high": 0.081, "low": 0.079, "close": 0.08, "volume": 100.0, "time": 1700000060000},
-        {"open": 0.081, "high": 0.082, "low": 0.08, "close": 0.081, "volume": 150.0, "time": 1700000000000},
-    ]
-
-    with patch.object(client, "_get_with_retry", return_value=mock_candles):
-        df = client.fetch_klines("B-DOGE_USDT", limit=10)
-
-    assert not df.empty
-    assert len(df) == 2
-    assert "timestamp" in df.columns
-    assert "open" in df.columns
-    assert "close" in df.columns
-    assert "volume" in df.columns
-    assert "taker_buy_volume" in df.columns
-    # Check that df was sorted chronologically ascending
-    assert df["timestamp"].iloc[0] < df["timestamp"].iloc[1]
-
-
-def test_coindcx_fetch_klines_pagination_mock(tmp_path) -> None:
-    cache = DataCache(cache_dir=str(tmp_path), enabled=False)
-    client = CoinDCXPublicClient(cache=cache)
-
-    # Page 1 (newer)
-    page1 = [
-        {"open": 0.082, "high": 0.083, "low": 0.081, "close": 0.082, "volume": 120.0, "time": 1700000120000},
-        {"open": 0.081, "high": 0.082, "low": 0.080, "close": 0.081, "volume": 110.0, "time": 1700000060000},
-    ]
-    # Page 2 (older)
-    page2 = [
-        {"open": 0.080, "high": 0.081, "low": 0.079, "close": 0.080, "volume": 100.0, "time": 1700000000000},
-    ]
-
-    with patch.object(client, "_get_with_retry", side_effect=[page1, page2]):
-        # Request span that triggers pagination
-        df = client.fetch_klines(
-            "B-DOGE_USDT",
-            start_time_ms=1700000000000,
-            end_time_ms=1700000120000,
-            limit=2,
-        )
-
-    assert len(df) == 3
-    assert df["timestamp"].iloc[0] < df["timestamp"].iloc[-1]
-
-
-def test_coindcx_fetch_futures_rt_prices_mock() -> None:
-    client = CoinDCXPublicClient()
-    mock_payload = {
-        "prices": {
-            "B-TRUTH_USDT": {"ls": 0.022532, "mp": 0.022533, "mkt": "TRUTHUSDT", "v": 100000.0, "fr": 0.0001},
-            "B-DOGE_USDT": {"ls": 0.0821, "mp": 0.0821, "mkt": "DOGEUSDT", "v": 200000.0, "fr": 0.0001},
-        }
-    }
-    mock_resp = MagicMock()
-    mock_resp.status_code = 200
-    mock_resp.json.return_value = mock_payload
-
-    with patch.object(client.client, "get", return_value=mock_resp):
-        prices = client.fetch_futures_rt_prices()
-        assert "B-TRUTH_USDT" in prices
-        assert prices["B-TRUTH_USDT"]["ls"] == 0.022532
-
-        ticker = client.fetch_ticker("B-TRUTH_USDT")
-        assert ticker is not None
-        assert ticker["ls"] == 0.022532
-
-
-def test_coindcx_fetch_klines_underlying_fallback_mock() -> None:
-    client = CoinDCXPublicClient()
-    # Simulate CoinDCX market_data/candles returning None (422)
-    mock_fallback_df = pd.DataFrame([
-        {"timestamp": pd.to_datetime(1700000000000, unit="ms", utc=True), "symbol": "B-TRUTH_USDT", "open": 0.022, "high": 0.023, "low": 0.021, "close": 0.0225, "volume": 50000.0, "quote_volume": 1125.0, "count": 100, "taker_buy_volume": 25000.0, "taker_buy_quote_volume": 562.5}
-    ])
-
-    with patch.object(client, "_get_with_retry", return_value=None):
-        with patch.object(client, "_fetch_klines_via_underlying", return_value=mock_fallback_df):
-            df = client.fetch_klines("B-TRUTH_USDT", limit=10)
-
-    assert not df.empty
-    assert df["symbol"].iloc[0] == "B-TRUTH_USDT"
-    assert df["close"].iloc[0] == 0.0225
 

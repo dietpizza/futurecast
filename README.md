@@ -9,8 +9,8 @@ A local **web dashboard for CoinDCX futures**: it tracks any number of coins, tr
 ## Architecture Overview
 
 ```
-[ CoinDCX Public REST (Read-Only) ]
-  (closed 5m / 15m candles of the coin and its sector benchmarks, order book)
+[ Binance USD-M Futures Public REST (Read-Only) ]
+  (closed 5m / 15m candles of the coin and its sector benchmarks, live price, order book)
                │
                ▼
    [ Alignment & Vectorized Feature Engineering ]
@@ -100,6 +100,9 @@ uv run futurecast --offline          # simulated candles, no network (no trainin
 
 In the dashboard, add any CoinDCX futures pair (e.g. `B-DOGE_USDT`, `B-SOL_USDT`). New coins are
 trained automatically from their real candle history and can be retrained from the dashboard.
+All market data comes from the Binance perpetual behind the pair (`B-SOL_USDT` → `SOLUSDT`,
+`B-1000PEPE_USDT` → `1000PEPEUSDT`, INR pairs → their `USDT` perpetual, priced in USDT); CoinDCX is
+only asked for its list of contracts to search.
 Tracked coins are remembered in `data/tracked_symbols.json`, trained models are saved under
 `models/`, and every forecast is appended to `logs/forecasts/`.
 

@@ -1,8 +1,8 @@
 """Multi-coin stream manager: real closed candles in, calibrated trade probabilities out.
 
-Every model input comes from fully closed 5m and 15m candles of the coin's underlying
-perpetual (CoinDCXPublicClient.fetch_candle_history). New candles are pulled when one
-closes; between candles only the displayed CoinDCX price and the order book refresh.
+Every model input comes from fully closed 5m and 15m candles of the Binance perpetual
+behind the CoinDCX pair (BinancePublicClient.fetch_candle_history). New candles are pulled
+when one closes; between candles only the displayed Binance price and the order book refresh.
 
 - 5m candles: residual-alpha models, trade risk, microstructure, and the 5m / 15m / 1h
   win-probability horizons.
@@ -22,12 +22,12 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 import pandas as pd
 
-from futurecast.config import AppConfig, load_config
+from futurecast.config import AppConfig, DataSourceConfig, load_config
 from futurecast.engine.forecaster import PureForecastEngine
 from futurecast.features.orderbook import compute_orderbook_metrics
 from futurecast.features.pipeline import FeaturePipeline
 from futurecast.features.shitcoin import is_high_beta_shitcoin
-from futurecast.ingestion.coindcx import CoinDCXPublicClient
+from futurecast.ingestion.binance import BinancePublicClient
 from futurecast.ingestion.factory import (
     detect_exchange,
     get_symbol_sector,
@@ -70,6 +70,11 @@ def _synthetic_candles(symbol: str, minutes: int, bars: int, rng: np.random.Gene
         "close": close, "volume": volume, "quote_volume": volume * close, "count": 100,
         "taker_buy_volume": volume * taker, "taker_buy_quote_volume": volume * close * taker,
     })
+
+
+def _binance_client(source: DataSourceConfig) -> BinancePublicClient:
+    return BinancePublicClient(base_url=source.base_url, timeout=source.request_timeout_sec,
+                               max_retries=source.max_retries)
 
 
 def _json_safe(obj: Any) -> Any:
@@ -180,7 +185,7 @@ class SymbolWorker:
 
     # ───────── candles ─────────
 
-    def _fetch_aligned(self, client: CoinDCXPublicClient, interval: str, bars: int) -> Tuple[pd.DataFrame, Optional[str]]:
+    def _fetch_aligned(self, client: BinancePublicClient, interval: str, bars: int) -> Tuple[pd.DataFrame, Optional[str]]:
         target, source = client.fetch_candle_history(self.symbol, interval, bars)
         if target.empty:
             return pd.DataFrame(), None
@@ -193,7 +198,7 @@ class SymbolWorker:
         aligned = align_cross_asset_data(target, benches, freq=f"{CANDLE_MINUTES[interval]}min")
         return aligned, source
 
-    def refresh_candles(self, client: CoinDCXPublicClient, now: Optional[pd.Timestamp] = None) -> List[str]:
+    def refresh_candles(self, client: BinancePublicClient, now: Optional[pd.Timestamp] = None) -> List[str]:
         """Append newly closed candles per interval and rerun models; returns intervals updated."""
         now = now or pd.Timestamp.now(tz="UTC")
         updated = []
@@ -279,7 +284,7 @@ class SymbolWorker:
         except Exception as err:
             logger.warning(f"Trade probability failed for {self.symbol} {interval}: {err}")
 
-    def refresh_orderbook(self, client: CoinDCXPublicClient) -> None:
+    def refresh_orderbook(self, client: BinancePublicClient) -> None:
         raw = client.fetch_orderbook_depth(self.symbol, 20)
         metrics = compute_orderbook_metrics(raw)
         with self._lock:
@@ -314,9 +319,11 @@ class SymbolWorker:
         """
         self.training_status = "training"
         self.training_error = None
-        client = CoinDCXPublicClient()
+        client = _binance_client(self.config.assets.data_source)
         report: Dict[str, Any] = {"data": {}, "trade": {}}
         try:
+            if client.resolve(self.symbol) is None:
+                raise RuntimeError(f"no trading Binance perpetual found for {self.symbol}")
             trade_models: Dict[str, TradeProbabilityModel] = {}
             history: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]] = {}
             for iv in CANDLE_MINUTES:
@@ -544,7 +551,7 @@ class MultiCoinStreamManager:
 
     # ───────── streaming ─────────
 
-    def _refresh_worker(self, worker: SymbolWorker, client: CoinDCXPublicClient) -> None:
+    def _refresh_worker(self, worker: SymbolWorker, client: BinancePublicClient) -> None:
         try:
             worker.refresh_candles(client)
         except Exception as err:
@@ -559,7 +566,7 @@ class MultiCoinStreamManager:
         self._running = True
         self.live = live
         logger.info(f"Starting stream loop (interval: {poll_interval_sec}s, live: {live})...")
-        client = CoinDCXPublicClient()
+        client = _binance_client(self.config.assets.data_source)
         if live:
             self.ensure_trained()
 
@@ -570,12 +577,10 @@ class MultiCoinStreamManager:
                     await asyncio.sleep(1.0)
                     continue
                 if live:
-                    rt_prices = await asyncio.to_thread(client.fetch_futures_rt_prices)
+                    prices = await asyncio.to_thread(client.fetch_live_prices, [w.symbol for w in workers])
                     for w in workers:
-                        info = rt_prices.get(w.symbol) or {}
-                        price = info.get("ls") or info.get("mp")
-                        if price:
-                            w.live_price = float(price)
+                        if w.symbol in prices:
+                            w.live_price = prices[w.symbol]
                     await asyncio.gather(*(asyncio.to_thread(self._refresh_worker, w, client) for w in workers))
                 for w in workers:
                     if w.symbol in self.workers:

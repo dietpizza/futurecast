@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 import pytest
 
 from futurecast.features.orderbook import compute_orderbook_metrics
-from futurecast.ingestion.coindcx import CoinDCXPublicClient
 from futurecast.schema import ForecastEvent, SignalState
 
 

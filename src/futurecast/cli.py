@@ -10,7 +10,7 @@ import typer
 def dashboard(
     host: str = typer.Option("127.0.0.1", "--host", help="Interface to bind the dashboard to"),
     port: int = typer.Option(8000, "--port", "-p", help="Port to serve the dashboard on"),
-    offline: bool = typer.Option(False, "--offline", help="Use simulated candles instead of live CoinDCX data"),
+    offline: bool = typer.Option(False, "--offline", help="Use simulated candles instead of live Binance data"),
 ) -> None:
     """Start the futurecast web dashboard (`futurecast web` works too)."""
     from futurecast.publisher.web_server import run_web_server
