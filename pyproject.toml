@@ -1,0 +1,37 @@
+[project]
+name = "futurecast"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Rohan Biswas", email = "imrohan550@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "catboost>=1.2.10",
+    "fastapi>=0.143.0",
+    "httpx>=0.28.1",
+    "lightgbm>=4.7.0",
+    "numpy>=2.5.4",
+    "optuna>=5.0.0",
+    "pandas>=3.0.6",
+    "pyarrow>=26.0.0",
+    "pydantic>=2.14.1",
+    "pytest>=9.1.1",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "scikit-learn>=1.9.1",
+    "scipy>=1.18.1",
+    "statsmodels>=0.15.0",
+    "typer>=0.27.3",
+    "uvicorn>=0.54.0",
+    "websockets>=17.2",
+    "xgboost>=3.4.1",
+]
+
+[project.scripts]
+futurecast = "futurecast:main"
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"

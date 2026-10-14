@@ -1,0 +1,27 @@
+target_asset: "DOGEUSDT"
+benchmark_assets:
+  - "BTCUSDT"
+  - "ETHUSDT"
+
+timeframe: "1m"
+history_days: 365
+
+# Data sources (strictly public read-only endpoints, no authentication required)
+data_source:
+  exchange: "binance"
+  base_url: "https://fapi.binance.com"
+  klines_endpoint: "/fapi/v1/klines"
+  funding_endpoint: "/fapi/v1/fundingRate"
+  oi_endpoint: "/fapi/v1/openInterestHist"
+  request_timeout_sec: 15
+  max_retries: 3
+  rate_limit_pause_sec: 0.1
+
+storage:
+  raw_dir: "data/raw"
+  processed_dir: "data/processed"
+  cache_dir: ".cache"
+  use_cache: true
+  format: "parquet"
+  compression: "zstd"
+  partition_cols: ["year", "month"]

@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.pytest_cache/
+
+# Data and logs (generated at runtime)
+data/
+logs/
+models/*.txt
+models/*.json
+models/*.cbm
+.cache/
+catboost_info/
+

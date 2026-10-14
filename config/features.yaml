@@ -1,0 +1,29 @@
+# Feature Engineering Specification (35 Features)
+cross_asset:
+  horizons_min: [1, 5, 15, 60]
+  beta_windows_min: [60, 1440]
+  rsi_period: 14
+
+microstructure:
+  volume_z_windows_min: [60, 1440]
+  rvr_window_min: 15
+  parkinson_windows_min: [15, 60, 240]
+  rv_ratio_window_min: 60
+  ofi_windows_min: [5, 15]
+
+derivatives:
+  funding_ema_window_min: 4320  # 3 days at 1-min
+  oi_delta_windows_min: [15, 60]
+  oi_divergence_window_min: 60
+
+technical:
+  stochastic_extremes_window_min: 60
+  vwap_window_min: 240  # 4 hours
+  wick_ratios: true
+
+# Target Configuration
+target:
+  name: "residual_alpha_15m"
+  horizon_min: 15
+  beta_window_min: 1440
+  huber_delta: 0.001
