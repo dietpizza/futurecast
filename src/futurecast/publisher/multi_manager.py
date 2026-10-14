@@ -43,6 +43,7 @@ from futurecast.models.trade_probability import (
     TradeProbabilityModel,
     trade_model_path,
 )
+from futurecast.paths import resolve
 from futurecast.schema import ForecastEvent
 
 logger = logging.getLogger(__name__)
@@ -413,15 +414,13 @@ class MultiCoinStreamManager:
     def __init__(
         self,
         config: Optional[AppConfig] = None,
-        models_dir: str = "models",
-        cache_dir: str = ".cache",
-        persistence_path: Optional[str | Path] = "data/tracked_symbols.json",
+        models_dir: str | Path = "models",
+        persistence_path: Optional[str | Path] = "tracked_symbols.json",
         live: bool = True,
     ) -> None:
         self.config = config or load_config()
-        self.models_dir = Path(models_dir)
-        self.cache_dir = Path(cache_dir)
-        self.persistence_path = Path(persistence_path) if persistence_path is not None else None
+        self.models_dir = resolve(models_dir)
+        self.persistence_path = resolve(persistence_path) if persistence_path is not None else None
         self.live = live
         self.workers: Dict[str, SymbolWorker] = {}
         self.ws_clients: Set[Any] = set()

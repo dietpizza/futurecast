@@ -8,7 +8,7 @@ import typer
 
 
 def dashboard(
-    host: str = typer.Option("127.0.0.1", "--host", help="Interface to bind the dashboard to"),
+    host: str = typer.Option("0.0.0.0", "--host", help="Interface to bind the dashboard to (default: every interface)"),
     port: int = typer.Option(8000, "--port", "-p", help="Port to serve the dashboard on"),
     offline: bool = typer.Option(False, "--offline", help="Use simulated candles instead of live Binance data"),
 ) -> None:

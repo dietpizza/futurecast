@@ -1,6 +1,7 @@
 """Tests for the air-gapped PureForecastEngine, calibration, and drift monitor."""
 
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 import numpy as np
 import pandas as pd
 from futurecast.config import load_config
@@ -60,7 +61,7 @@ def test_drift_monitor_realization():
 
 
 def test_pure_forecast_engine_air_gapped_guarantee(tmp_path):
-    cfg = load_config("config")
+    cfg = load_config(Path(__file__).resolve().parents[1] / "config")
     cfg.forecasting.output_dir = str(tmp_path / "forecasts")
 
     # Train a minimal fast model on synthetic data

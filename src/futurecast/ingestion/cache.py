@@ -8,22 +8,24 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 import pandas as pd
 
+from futurecast.paths import resolve
+
 logger = logging.getLogger(__name__)
 
 
 class DataCache:
-    """Manages file-based Parquet caching for market data queries in .cache/.
+    """Manages file-based Parquet caching for market data queries in ~/.futurecast/cache/.
     
     Prevents repeated network downloads of historical immutable financial candles.
     """
 
     def __init__(
         self,
-        cache_dir: str | Path = ".cache",
+        cache_dir: str | Path = "cache",
         enabled: bool = True,
         compression: str = "zstd",
     ) -> None:
-        self.cache_dir = Path(cache_dir)
+        self.cache_dir = resolve(cache_dir)
         self.enabled = enabled
         self.compression = compression
         if self.enabled:

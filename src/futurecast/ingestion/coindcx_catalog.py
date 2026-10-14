@@ -2,19 +2,19 @@
 
 Provides structured metadata, sector classification, and benchmark routing
 for CoinDCX derivatives contracts (B-* pairs) and INR spot pairs (I-* pairs).
-Dynamically integrates with CoinDCX's public active instruments API with zero-latency caching.
+The live list is every trading Binance USDT perpetual under its CoinDCX pair name
+(1000PEPEUSDT -> B-1000PEPE_USDT); CoinDCX itself is never queried.
 """
 
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional
 import httpx
 
 from futurecast.features.shitcoin import is_high_beta_shitcoin
+from futurecast.ingestion.binance import BinancePublicClient
 from futurecast.ingestion.factory import extract_base_and_quote, get_symbol_sector, resolve_benchmarks
 
 logger = logging.getLogger(__name__)
@@ -113,70 +113,37 @@ COINDCX_FUTURES_REGISTRY: List[Dict[str, str]] = [
 
 # In-memory dynamic catalog cache
 _ALL_INSTRUMENTS_CACHE: List[Dict[str, Any]] = []
-_TARGET_NAMES_CACHE: Dict[str, str] = {}
 _LAST_FETCH_TIME: float = 0.0
 _CACHE_TTL_SEC: float = 3600.0  # 1 hour
 
-
-def _load_cached_catalog_data() -> None:
-    """Load cached active instruments and token names from local disk if available."""
-    global _TARGET_NAMES_CACHE
-    cache_dir = Path(".cache")
-    names_file = cache_dir / "coindcx_target_names.json"
-    if names_file.exists() and not _TARGET_NAMES_CACHE:
-        try:
-            with open(names_file, "r", encoding="utf-8") as f:
-                _TARGET_NAMES_CACHE = json.load(f)
-        except Exception:
-            pass
+# CoinDCX lists crypto and commodity perpetuals, never Binance's stock / FX / index ones
+_LISTED_UNDERLYINGS = ("COIN", "COMMODITY")
+_catalog_client = BinancePublicClient(timeout=4.0, max_retries=1)
 
 
-def _sync_coindcx_instruments() -> List[str]:
-    """Fetch active futures instruments from CoinDCX API or fallback cache."""
-    cache_dir = Path(".cache")
-    inst_file = cache_dir / "coindcx_active_instruments.json"
-
-    # Try fetching fresh list from CoinDCX public derivatives API
+def _binance_pairs() -> List[str]:
+    """CoinDCX pair names of the trading Binance USDT perpetuals; empty when Binance is unreachable."""
     try:
-        with httpx.Client(timeout=4.0) as client:
-            resp = client.get("https://api.coindcx.com/exchange/v1/derivatives/futures/data/active_instruments")
-            if resp.status_code == 200:
-                data = resp.json()
-                if isinstance(data, list) and len(data) > 0:
-                    try:
-                        cache_dir.mkdir(parents=True, exist_ok=True)
-                        with open(inst_file, "w", encoding="utf-8") as f:
-                            json.dump(data, f)
-                    except Exception:
-                        pass
-                    return data
-    except Exception as e:
-        logger.debug(f"Live CoinDCX instruments fetch skipped: {e}")
-
-    # Fallback to disk cache if available
-    if inst_file.exists():
-        try:
-            with open(inst_file, "r", encoding="utf-8") as f:
-                cached = json.load(f)
-                if isinstance(cached, list) and len(cached) > 0:
-                    return cached
-        except Exception:
-            pass
-
-    # Baseline fallback symbols
-    return [item["symbol"] for item in COINDCX_FUTURES_REGISTRY]
+        perps = _catalog_client.perpetuals().values()
+    except httpx.HTTPError as e:
+        logger.debug(f"Binance perpetuals fetch skipped: {e}")
+        return []
+    return sorted(
+        f"B-{s['baseAsset']}_USDT" for s in perps
+        if s.get("quoteAsset") == "USDT" and s.get("underlyingType") in _LISTED_UNDERLYINGS
+        and s["baseAsset"].isascii()  # CoinDCX has no CJK-named pairs
+    )
 
 
 def get_all_coindcx_instruments() -> List[Dict[str, Any]]:
-    """Return complete list of all 500+ active CoinDCX futures contracts, enriched with metadata."""
-    global _ALL_INSTRUMENTS_CACHE, _LAST_FETCH_TIME, _TARGET_NAMES_CACHE
+    """Return the curated registry plus every pair with a trading Binance perpetual, enriched with metadata."""
+    global _ALL_INSTRUMENTS_CACHE, _LAST_FETCH_TIME
     now = time.time()
 
     if _ALL_INSTRUMENTS_CACHE and (now - _LAST_FETCH_TIME) < _CACHE_TTL_SEC:
         return _ALL_INSTRUMENTS_CACHE
 
-    _load_cached_catalog_data()
-    raw_symbols = _sync_coindcx_instruments()
+    raw_symbols = _binance_pairs()
 
     # Build lookup of curated registry items
     curated_map = {item["symbol"]: item for item in COINDCX_FUTURES_REGISTRY}
@@ -209,7 +176,7 @@ def get_all_coindcx_instruments() -> List[Dict[str, Any]]:
             "coindcx_url": coindcx_url,
         })
 
-    # Then merge all live active instruments from CoinDCX
+    # Then merge every pair Binance has a perpetual for
     for sym in raw_symbols:
         s_clean = sym.strip().upper()
         if s_clean in seen_symbols:
@@ -220,8 +187,8 @@ def get_all_coindcx_instruments() -> List[Dict[str, Any]]:
         sector = get_symbol_sector(s_clean)
         is_shitcoin = is_high_beta_shitcoin(s_clean, sector)
         benchmarks = resolve_benchmarks(s_clean, "coindcx", sector_aware=True)
-        name = _TARGET_NAMES_CACHE.get(base.upper(), base)
-        description = f"CoinDCX {quote}-Margined Perpetual Contract for {name} ({base})."
+        name = base
+        description = f"CoinDCX {quote}-Margined Perpetual Contract for {base}."
         coindcx_url = f"https://coindcx.com/futures/{s_clean}" if s_clean.startswith("B-") else f"https://coindcx.com/trade/{s_clean}"
 
         enriched.append({
@@ -237,7 +204,7 @@ def get_all_coindcx_instruments() -> List[Dict[str, Any]]:
         })
 
     _ALL_INSTRUMENTS_CACHE = enriched
-    _LAST_FETCH_TIME = now
+    _LAST_FETCH_TIME = now if raw_symbols else 0.0  # after a Binance outage, retry on the next search
     return _ALL_INSTRUMENTS_CACHE
 
 
@@ -259,7 +226,7 @@ def get_coindcx_futures_catalog(
 ) -> List[Dict[str, Any]]:
     """Return enriched catalog of CoinDCX futures pairs with search and sector filtering.
     
-    Includes all 500+ active CoinDCX futures contracts, dynamically resolves symbols like B-ZK_USDT,
+    Includes every pair with a trading Binance perpetual, dynamically resolves symbols like B-ZK_USDT,
     and handles direct URL paste (e.g. https://coindcx.com/futures/B-ZK_USDT).
     """
     all_items = get_all_coindcx_instruments()

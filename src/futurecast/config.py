@@ -10,6 +10,8 @@ from typing import Any, List
 import yaml
 from pydantic import BaseModel, Field
 
+from futurecast.paths import resolve
+
 
 class DataSourceConfig(BaseModel):
     exchange: str = "binance"
@@ -25,7 +27,7 @@ class DataSourceConfig(BaseModel):
 class StorageConfig(BaseModel):
     raw_dir: str = "data/raw"
     processed_dir: str = "data/processed"
-    cache_dir: str = ".cache"
+    cache_dir: str = "cache"
     use_cache: bool = True
     format: str = "parquet"
     compression: str = "zstd"
@@ -136,7 +138,8 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_config(config_dir: str | Path = "config") -> AppConfig:
-    cfg_path = Path(config_dir)
+    """Settings from `config_dir` (~/.futurecast/config by default); missing files keep the defaults."""
+    cfg_path = resolve(config_dir)
     assets_raw = load_yaml(cfg_path / "assets.yaml")
     features_raw = load_yaml(cfg_path / "features.yaml")
     model_raw = load_yaml(cfg_path / "model.yaml")

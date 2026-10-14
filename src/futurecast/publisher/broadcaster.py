@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from futurecast.paths import resolve
 from futurecast.schema import ForecastEvent
 
 
@@ -19,7 +20,7 @@ class SignalBroadcaster:
         render_terminal: bool = False,
     ) -> None:
         # render_terminal is still accepted from existing callers; forecasts are shown in the dashboard only.
-        self.output_dir = Path(output_dir)
+        self.output_dir = resolve(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_log_file(self, date_str: str) -> Path:

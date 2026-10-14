@@ -28,13 +28,13 @@ A local **web dashboard for CoinDCX futures**: it tracks any number of coins, tr
                │
                ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│      READ-ONLY WEB DASHBOARD (FastAPI + WebSocket, localhost)          │
+│      READ-ONLY WEB DASHBOARD (FastAPI + WebSocket, port 8000)          │
 │                                                                        │
 │  • Strictly NO Private Keys / NO Trading APIs                          │
 │  • Input: Closed Candles, Live Price & Order Book                      │
 │  • Output: Calibrated Win Probabilities (5m · 15m · 1h · 4h · 8h),     │
 │    Residual Alpha, Beta Hedge Ratio, Trade Risk, Model Agreement       │
-│  • Audit: JSONL Forecast Log in logs/forecasts/                        │
+│  • Audit: JSONL Forecast Log in ~/.futurecast/logs/forecasts/          │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -86,13 +86,16 @@ See `src/futurecast/models/trade_probability.py` for the full procedure.
 ./run.sh
 ```
 
-That starts the dashboard on **http://127.0.0.1:8000**. `./run.sh` is a thin wrapper around the
-`futurecast` command, so these are equivalent:
+That starts the dashboard on port 8000 on every network interface: open **http://127.0.0.1:8000**
+on the same machine, or the machine's IP from elsewhere. The dashboard has no login, so anyone who
+can reach the port can add coins and start training; firewall the port or pass `--host 127.0.0.1`
+to keep it local. `./run.sh` is a thin wrapper around the `futurecast` command, so these are
+equivalent:
 
 ```bash
 uv run futurecast                    # same as ./run.sh
 uv run futurecast --port 8002        # or: PORT=8002 ./run.sh
-uv run futurecast --host 0.0.0.0     # listen on every interface
+uv run futurecast --host 127.0.0.1   # this machine only
 uv run futurecast --offline          # simulated candles, no network (no training)
 ```
 
@@ -101,10 +104,18 @@ uv run futurecast --offline          # simulated candles, no network (no trainin
 In the dashboard, add any CoinDCX futures pair (e.g. `B-DOGE_USDT`, `B-SOL_USDT`). New coins are
 trained automatically from their real candle history and can be retrained from the dashboard.
 All market data comes from the Binance perpetual behind the pair (`B-SOL_USDT` → `SOLUSDT`,
-`B-1000PEPE_USDT` → `1000PEPEUSDT`, INR pairs → their `USDT` perpetual, priced in USDT); CoinDCX is
-only asked for its list of contracts to search.
-Tracked coins are remembered in `data/tracked_symbols.json`, trained models are saved under
-`models/`, and every forecast is appended to `logs/forecasts/`.
+`B-1000PEPE_USDT` → `1000PEPEUSDT`, INR pairs → their `USDT` perpetual, priced in USDT). The add-coin
+search lists every Binance crypto and commodity perpetual under its CoinDCX name; CoinDCX itself is
+never called.
+
+Everything the app keeps lives in `~/.futurecast` (set `FUTURECAST_HOME` to use another folder):
+
+| Path | Contents |
+|---|---|
+| `tracked_symbols.json` | Coins on the dashboard |
+| `models/` | Trained models |
+| `logs/forecasts/` | Every forecast, one JSONL file per day |
+| `config/*.yaml` | Optional overrides; any file left out uses the defaults shown in this repo's `config/` |
 
 **Key Features of the Web Terminal:**
 - **Dynamic Coin Management**: Add any CoinDCX futures pair on the fly (e.g. `B-DOGE_USDT`, `B-SOL_USDT`, `I-BTC_INR`) with automatic sector routing.

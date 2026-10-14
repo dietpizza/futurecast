@@ -206,6 +206,7 @@ class CatBoostAlphaModel:
             random_seed=42,
             verbose=False,
             early_stopping_rounds=30 if eval_set is not None else None,
+            allow_writing_files=False,
         )
         self.model.fit(X_train, y_train, eval_set=eval_set, verbose=False)
         return self.model

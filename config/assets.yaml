@@ -20,7 +20,7 @@ data_source:
 storage:
   raw_dir: "data/raw"
   processed_dir: "data/processed"
-  cache_dir: ".cache"
+  cache_dir: "cache"
   use_cache: true
   format: "parquet"
   compression: "zstd"

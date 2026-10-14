@@ -49,7 +49,7 @@ def create_app(
     initial_symbols: Optional[List[str]] = None,
     live_mode: bool = True,
     poll_interval: float = 3.0,
-    persistence_path: Optional[str | Path] = "data/tracked_symbols.json",
+    persistence_path: Optional[str | Path] = "tracked_symbols.json",
     models_dir: str | Path = "models",
 ) -> FastAPI:
     """Create and configure the FastAPI web application."""
@@ -217,12 +217,12 @@ def create_app(
 
 
 def run_web_server(
-    host: str = "127.0.0.1",
+    host: str = "0.0.0.0",
     port: int = 8000,
     symbols: Optional[List[str]] = None,
     live: bool = True,
     poll_interval: float = 3.0,
-    persistence_path: Optional[str | Path] = "data/tracked_symbols.json",
+    persistence_path: Optional[str | Path] = "tracked_symbols.json",
 ) -> None:
     """Launch the Web UI server."""
     app = create_app(
@@ -231,6 +231,7 @@ def run_web_server(
         poll_interval=poll_interval,
         persistence_path=persistence_path,
     )
-    print(f"\n⚡ futurecast Web UI running at: http://{host}:{port}")
+    shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host  # a wildcard bind is not a browsable address
+    print(f"\n⚡ futurecast Web UI running at: http://{shown}:{port} (listening on {host})")
     print(f"🛡️  Safety: STRICTLY ZERO ORDER EXECUTION\n")
     uvicorn.run(app, host=host, port=port, log_level="warning")
