@@ -83,7 +83,7 @@
         <span class="c-short num"><span class="th-help" data-horizon-label="Short win" data-tooltip-title="Short win probability" data-tooltip="Chance a short entered now hits its take-profit before its stop-loss within the horizon. Calibrated on real past outcomes; 'needs' is the win rate required to break even after fees.">Short win · 15m</span></span>
         <span class="c-models"><span class="th-help" data-tooltip-title="Model agreement" data-tooltip="One dot per model (LightGBM, XGBoost, CatBoost): green if its own odds clear break-even for a long, red for a short, grey for neither.">Models</span></span>
         <span class="c-book"><span class="th-help" data-tooltip-title="Order book" data-tooltip="Share of resting limit-order liquidity on the bid (buy) side across the top 20 levels.">Order book</span></span>
-        <span class="c-risk"><span class="th-help" data-tooltip-title="Long / short risk" data-tooltip="Rule-based hazard score (0–100) for opening a long (L) or short (S) right now (overextension, funding, volatility, order book), with a leverage guide. Not a probability.">Risk L / S</span></span>
+        <span class="c-risk"><span class="th-help" data-horizon-label="Risk L / S" data-tooltip-title="Long / short risk" data-tooltip="Trained models estimate the worst 5% of moves against a long (L) or short (S) within the horizon. The score (0–100) ranks that worst case against this coin's recent history; 'Max' is the highest leverage that keeps liquidation beyond it. Not a probability.">Risk L / S · 15m</span></span>
         <span class="c-actions"></span>
       </div>
       <div class="coins-container" id="coins-container"></div>
@@ -134,8 +134,8 @@
               <dd>The probabilities scored better than simply quoting the usual win rate, on <em>newer</em> history the models never saw, with 90% confidence. Without it the page shows the usual (base) rate instead.</dd>
             </div>
             <div class="glossary-item">
-              <dt><span class="term-badge">bps</span> Basis points &amp; Residual Alpha</dt>
-              <dd><strong>1 bps = 0.01%</strong>. Residual Alpha is the expected move after removing Bitcoin's pull; it appears in the details as a secondary signal.</dd>
+              <dt><span class="term-badge">bps</span> Basis points</dt>
+              <dd><strong>1 bps = 0.01%</strong>. The order book spread is quoted in basis points.</dd>
             </div>
           </dl>
         </div>
@@ -171,7 +171,7 @@
             </div>
             <div class="glossary-item">
               <dt><span class="term-badge">Risk</span> Long / short risk</dt>
-              <dd>A 0–100 hazard score for opening each side now, from overextension, liquidation and squeeze pressure, funding and volatility.</dd>
+              <dd>Trained models estimate how far price could move against each side in the worst 5% of cases. The 0–100 score ranks that against the coin's recent history; "Max" is the highest leverage that keeps liquidation beyond it.</dd>
             </div>
             <div class="glossary-item">
               <dt><span class="term-badge">CVD</span> Cumulative volume delta</dt>

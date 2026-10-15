@@ -956,10 +956,6 @@ a {
   line-height: 1.5;
 }
 
-.risk-side + .risk-side {
-  margin-top: 12px;
-}
-
 .risk-side-head {
   display: flex;
   align-items: center;
@@ -968,30 +964,187 @@ a {
   font-weight: 600;
 }
 
-.meter {
-  height: 5px;
-  margin: 6px 0 4px;
-  border-radius: 999px;
-  background: var(--neu-soft);
-  overflow: hidden;
-}
-
-.meter span {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  box-shadow: none;
-}
-
-.meter .lvl-low { background: var(--pos-fill); }
-.meter .lvl-moderate { background: #f59e0b; }
-.meter .lvl-high { background: #f97316; }
-.meter .lvl-extreme { background: var(--neg-fill); }
-
-.risk-side p {
+.side-note {
+  margin-top: 8px;
   font-size: 12.5px;
   color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* Trade block: the numbers you act on, at full contrast. The side's color says whether it is a trade. */
+.trade-block {
+  border-color: var(--border-strong);
+  box-shadow: inset 0 3px 0 var(--accent);
+}
+
+.trade-block h3 {
+  font-size: 13px;
+  color: var(--accent-text);
+}
+
+.trade-side {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-raised);
+}
+
+.trade-side.is-go-long { border-color: var(--pos-fill); background: var(--pos-soft); box-shadow: inset 4px 0 0 var(--pos-fill); }
+.trade-side.is-go-short { border-color: var(--neg-fill); background: var(--neg-soft); box-shadow: inset 4px 0 0 var(--neg-fill); }
+.trade-side.is-unproven { border-color: var(--warn); box-shadow: inset 4px 0 0 var(--warn); }
+
+.trade-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.trade-why {
+  margin-top: 6px;
+  font-size: 13.5px;
+  font-weight: 500;
   line-height: 1.45;
+  color: var(--text);
+}
+
+/* Two-up while long and short sit side by side (the page is capped in width), four-up once they stack */
+.trade-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+  margin-top: 14px;
+}
+
+.trade-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  min-width: 0;
+}
+
+.trade-stat-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.trade-stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.trade-stat-value.is-tp { color: var(--pos); }
+.trade-stat-value.is-sl { color: var(--neg); }
+.trade-stat-value.is-lvl-low { color: var(--pos); }
+.trade-stat-value.is-lvl-moderate { color: var(--warn); }
+.trade-stat-value.is-lvl-high { color: var(--orange); }
+.trade-stat-value.is-lvl-extreme { color: var(--neg); }
+
+.trade-stat-sub {
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+}
+
+.trade-record {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-strong);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.trade-record strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.trade-elsewhere {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-muted);
+}
+
+.pill-link {
+  border: 0;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Fine print: supporting detail that doesn't change a trade */
+.detail-quiet {
+  background: transparent;
+}
+
+.detail-quiet .kv {
+  font-size: 12.5px;
+}
+
+.detail-quiet .kv dd,
+.detail-quiet .inline-stats strong {
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.detail-quiet .risk-side-head {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.detail-quiet .reliability summary {
+  color: var(--text-2);
+}
+
+.status-text {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.status-text.is-edge {
+  color: var(--text-muted);
+}
+
+/* One-line block (order book) */
+.detail-inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 20px;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.detail-inline h3 {
+  margin-bottom: 0;
+}
+
+.inline-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 20px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.inline-stats strong {
+  font-weight: 550;
 }
 
 /* Horizon table */
@@ -1042,8 +1195,8 @@ a {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
-/* Evidence */
-.evidence-grid {
+/* Evidence and trade risk: long and short side by side */
+.sides-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px 32px;
@@ -1054,14 +1207,42 @@ a {
 }
 
 .reliability {
-  display: grid;
-  gap: 5px;
   margin-top: 12px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
   font-size: 11.5px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
+}
+
+.reliability summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.reliability summary::-webkit-details-marker {
+  display: none;
+}
+
+.reliability summary .icon {
+  color: var(--text-muted);
+  transition: transform 0.15s ease;
+}
+
+.reliability[open] summary .icon {
+  transform: rotate(180deg);
+}
+
+.rel-rows {
+  display: grid;
+  gap: 5px;
+  margin-top: 10px;
 }
 
 .rel-row {
@@ -1157,7 +1338,8 @@ a {
   }
   .c-models { display: none; }
   .live-clock { display: none; }
-  .evidence-grid { grid-template-columns: minmax(0, 1fr); }
+  .sides-grid { grid-template-columns: minmax(0, 1fr); }
+  .trade-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 @media (max-width: 720px) {
@@ -1202,4 +1384,6 @@ a {
 
   .row-details { padding: 4px 12px 16px; }
   .details-grid { grid-template-columns: minmax(0, 1fr); }
+  .trade-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trade-stat-value { font-size: 19px; }
 }

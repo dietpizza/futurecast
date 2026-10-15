@@ -26,10 +26,14 @@ const SECTOR_LABELS = {
   GENERAL_ALT: "Alt",
 };
 const BIAS_LABELS = {
-  FAVORS_LONG: { label: "Favors long", tag: "tag-pos" },
-  FAVORS_SHORT: { label: "Favors short", tag: "tag-neg" },
-  AVOID_BOTH_HIGH_RISK: { label: "Risky both ways", tag: "tag-warn" },
+  LONG_RISKIER: { label: "Longs riskier", tag: "tag-warn" },
+  SHORT_RISKIER: { label: "Shorts riskier", tag: "tag-warn" },
   BALANCED: { label: "Balanced", tag: "" },
+};
+const RISK_STATUS = {
+  edge: { label: "Beats baseline", tag: "tag-pos", note: "The models beat a volatility-only baseline on unseen data (90% confidence)." },
+  no_edge: { label: "Volatility baseline", tag: "", note: "The models did not beat a volatility-only baseline on unseen data, so the baseline is shown." },
+  insufficient_data: { label: "Too little data", tag: "tag-warn", note: "Too few independent test windows to judge, so the volatility baseline is shown." },
 };
 const STATUS_INFO = {
   edge: { label: "Proven edge", tag: "tag-pos", note: "Beat the base rate on unseen data (90% confidence)." },
@@ -389,33 +393,163 @@ function bookCell(depth) {
     </div>`;
 }
 
-function riskCell(risk) {
-  if (!isNum(risk.long_risk_score) || !isNum(risk.short_risk_score)) {
-    return `<div class="c-risk"><span class="val-muted">—</span></div>`;
+function riskData(coin, horizon = currentTimeframe) {
+  return (coin.trade_risk || {})[horizon] || null;
+}
+
+function worstMoveText(side, d) {
+  return `${side === "long" ? "−" : "+"}${formatNumber(d.worst_move_pct, 2)}%`;
+}
+
+function riskCell(coin) {
+  if (!coin.has_data) return `<div class="c-risk"><span class="val-muted">—</span></div>`;
+  const r = riskData(coin);
+  if (!r || !r.long || !r.short) {
+    return `<div class="c-risk"><span class="val-muted">—</span><div class="cell-sub">${esc(trainingNote(coin))}</div></div>`;
   }
-  const lev = (risk.max_recommended_leverage || "").replace(/\s*\(.*\)\s*/, "").replace("-", "–");
-  const bias = (BIAS_LABELS[risk.asymmetric_bias] || BIAS_LABELS.BALANCED).label;
+  const bias = (BIAS_LABELS[r.bias] || BIAS_LABELS.BALANCED).label;
+  const line = (side, name) => {
+    const d = r[side];
+    return `${name} ${worstMoveText(side, d)} worst case · riskier than ${d.score}% of recent windows · max ${d.max_leverage}x`;
+  };
+  const notes = [...new Set(["long", "short"].map((side) => (RISK_STATUS[r[side].status] || {}).note).filter(Boolean))];
   const tip = [
-    `Long ${risk.long_risk_score}/100 · ${titleCase(risk.long_risk_level || "Low")}`,
-    `Short ${risk.short_risk_score}/100 · ${titleCase(risk.short_risk_level || "Low")}`,
-    risk.max_recommended_leverage ? `Max leverage ${risk.max_recommended_leverage}` : "",
-    "Rule-based hazard scores, not probabilities",
-  ].filter(Boolean).join("\n");
+    line("long", "Long"),
+    line("short", "Short"),
+    ...notes,
+  ].join("\n");
   return `
-    <div class="c-risk" data-tooltip-title="Trade risk · ${esc(bias.toLowerCase())}" data-tooltip="${esc(tip)}">
+    <div class="c-risk" data-tooltip-title="Worst 5% of moves within ${esc(currentTimeframe)} · ${esc(bias.toLowerCase())}" data-tooltip="${esc(tip)}">
       <span class="risk-pair">
-        <span class="risk-num ${riskLevelClass(risk.long_risk_level)}"><small>L</small>${risk.long_risk_score}</span>
-        <span class="risk-num ${riskLevelClass(risk.short_risk_level)}"><small>S</small>${risk.short_risk_score}</span>
+        <span class="risk-num ${riskLevelClass(r.long.level)}"><small>L</small>${r.long.score}</span>
+        <span class="risk-num ${riskLevelClass(r.short.level)}"><small>S</small>${r.short.score}</span>
       </span>
-      ${lev ? `<div class="cell-sub">Max ${esc(lev)}</div>` : ""}
+      <div class="cell-sub">Max ${r.long.max_leverage}x / ${r.short.max_leverage}x</div>
     </div>`;
 }
 
 // ───────── Expanded details ─────────
 
-function statusTag(d) {
-  const info = STATUS_INFO[d.status] || { label: titleCase(d.status), tag: "" };
-  return `<span class="tag ${info.tag}">${info.label}</span>`;
+function replayText(r) {
+  return r.trades
+    ? `${r.trades} ${r.trades === 1 ? "trade" : "trades"} · ${pct(r.win_rate)} won · ${signed(r.avg_net_return_pct, 2)}% avg after fees`
+    : "never cleared break-even";
+}
+
+// Why a side is or isn't a trade right now. Mirrors the signal rules in models/trade_probability.py.
+function sideVerdict(h, side) {
+  const d = h[side];
+  const r = (d.metrics || {}).replay || {};
+  const odds = `${pct(d.probability)} win odds`;
+  const gap = Math.round(d.probability * 100) - Math.round(d.break_even * 100);
+  const vsNeeded = gap === 0
+    ? `level with the ${pct(d.break_even)} needed to break even`
+    : `${Math.abs(gap)} pts ${gap > 0 ? "above" : "below"} the ${pct(d.break_even)} needed to break even`;
+  if (h.signal === side.toUpperCase()) {
+    return { state: `go-${side}`, label: `${titleCase(side)} signal`, pill: side === "long" ? "pill-bull" : "pill-bear", why: `${odds}, ${vsNeeded}` };
+  }
+  const idle = { state: "idle", label: "No trade", pill: "pill-neutral" };
+  if (d.status !== "edge") {
+    const what = d.status === "insufficient_data" ? "Too little test data to prove an edge" : "No proven edge";
+    return { ...idle, why: `${what}: ${pct(d.probability)} is just the recent base rate` };
+  }
+  if (d.probability < d.break_even) return { ...idle, why: `${odds}, ${vsNeeded}` };
+  if (!d.signal_validated) {
+    const n = r.trades || 0;
+    const record = n < 10
+      ? `only ${n} past ${n === 1 ? "signal" : "signals"} to judge by (needs 10)`
+      : `past signals averaged ${signed(r.avg_net_return_pct, 2)}% after fees`;
+    return { state: "unproven", label: "Unproven", pill: "pill-warn", why: `${odds} clear break-even, but ${record}` };
+  }
+  return { ...idle, why: `${odds} clear break-even, but the ${side === "long" ? "short" : "long"} side is stronger` };
+}
+
+function tradeStat(label, value, sub = "", tip = null, valueClass = "") {
+  const attrs = tip ? ` data-tooltip-title="${esc(tip.title)}" data-tooltip="${esc(tip.body)}"` : "";
+  return `
+    <div class="trade-stat"${attrs}>
+      <span class="trade-stat-label">${label}</span>
+      <span class="trade-stat-value ${valueClass}">${value}</span>
+      ${sub ? `<span class="trade-stat-sub">${sub}</span>` : ""}
+    </div>`;
+}
+
+function tradeSide(coin, h, side) {
+  const d = h[side];
+  if (!d) return "";
+  const v = sideVerdict(h, side);
+  const up = side === "long";
+  const price = Number(coin.current_price);
+  const level = (dir, movePct) => (isNum(price) && price ? formatPrice(price * (1 + dir * movePct / 100)) : "—");
+  const risk = (riskData(coin) || {})[side];
+
+  let riskStats = tradeStat("Worst case", "—", trainingNote(coin)) + tradeStat("Max leverage", "—");
+  if (risk) {
+    const status = RISK_STATUS[risk.status] || {};
+    const m = risk.metrics || {};
+    const held = isNum(m.coverage) && isNum(m.n_independent)
+      ? `Held ${pct(m.coverage, 1)} of the time on ${m.n_independent.toLocaleString()} unseen windows.`
+      : "";
+    const worstTip = {
+      title: `Worst 5% of moves within ${currentTimeframe}`,
+      body: [
+        `In 95% of cases price ${up ? "falls" : "rises"} no more than ${formatNumber(risk.worst_move_pct, 2)}% against a ${side}.`,
+        `Risk ${risk.score}/100: riskier than ${risk.score}% of this coin's recent windows.`,
+        status.note,
+        held,
+      ].filter(Boolean).join("\n"),
+    };
+    const levTip = {
+      title: "Max leverage",
+      body: "Highest of 1, 2, 3, 5, 10 or 20x whose liquidation price, after maintenance margin and fees, stays beyond the worst case.",
+    };
+    riskStats = tradeStat("Worst case", worstMoveText(side, risk), `<span class="risk-num ${riskLevelClass(risk.level)}">${risk.score} · ${esc(titleCase(risk.level))}</span>`, worstTip, `is-${riskLevelClass(risk.level)}`)
+      + tradeStat("Max leverage", `${risk.max_leverage}x`, "", levTip);
+  }
+
+  const replay = (d.metrics || {}).replay;
+  const record = d.status === "edge" && replay
+    ? `<p class="trade-record"><span data-tooltip-title="Replay on unseen data" data-tooltip="Take the trade every time the odds cleared break-even, one position at a time, on history the model never saw. Signals only fire for sides whose replay made money after fees on 10+ trades.">When it said go</span> <strong>${esc(replayText(replay))}</strong></p>`
+    : "";
+
+  return `
+    <div class="trade-side is-${v.state}">
+      <div class="trade-head">
+        <span>${up ? "Long" : "Short"}</span>
+        <span class="pill ${v.pill}">${v.label}</span>
+      </div>
+      <p class="trade-why">${esc(v.why)}</p>
+      <div class="trade-stats">
+        ${tradeStat("Take-profit", level(up ? 1 : -1, h.tp_pct), `${up ? "+" : "−"}${formatNumber(h.tp_pct, 2)}%`, null, "is-tp")}
+        ${tradeStat("Stop", level(up ? -1 : 1, h.sl_pct), `${up ? "−" : "+"}${formatNumber(h.sl_pct, 2)}%`, null, "is-sl")}
+        ${riskStats}
+      </div>
+      ${record}
+    </div>`;
+}
+
+// The few numbers you act on for the selected horizon, highlighted only when a side is a trade
+function tradeBlock(coin) {
+  const h = horizonData(coin);
+  if (!h) return "";
+  const elsewhere = HORIZON_ORDER.filter((k) => k !== currentTimeframe)
+    .map((k) => [k, horizonData(coin, k)])
+    .filter(([, o]) => o && (o.signal === "LONG" || o.signal === "SHORT"))
+    .map(([k, o]) => `<button class="pill pill-sm pill-link ${o.signal === "LONG" ? "pill-bull" : "pill-bear"}" onclick="setTimeframe('${k}')">${titleCase(o.signal)} at ${k}</button>`)
+    .join("");
+  return `
+    <section class="detail-block detail-wide trade-block">
+      <h3>Trade · ${esc(currentTimeframe)} <span class="h3-note">levels from the live price ${formatPrice(coin.current_price)}</span>${elsewhere ? `<span class="trade-elsewhere">Other horizons ${elsewhere}</span>` : ""}</h3>
+      <div class="sides-grid">
+        ${tradeSide(coin, h, "long")}
+        ${tradeSide(coin, h, "short")}
+      </div>
+    </section>`;
+}
+
+function statusText(d) {
+  const info = STATUS_INFO[d.status] || { label: titleCase(d.status) };
+  return `<span class="status-text${d.status === "edge" ? " is-edge" : ""}">${info.label}</span>`;
 }
 
 function horizonsBlock(coin) {
@@ -425,14 +559,18 @@ function horizonsBlock(coin) {
     const sig = h.signal === "LONG" ? `<span class="pill pill-sm pill-bull">Long</span>`
       : h.signal === "SHORT" ? `<span class="pill pill-sm pill-bear">Short</span>`
       : unproven ? `<span class="pill pill-sm pill-warn" data-tooltip-title="Unproven ${unproven}" data-tooltip="${esc(UNPROVEN_TIP)}">Unproven ${unproven}</span>`
-      : `<span class="pill pill-sm pill-neutral">Neutral</span>`;
-    const side = (s) => h[s]
-      ? `<td class="num"><strong class="${h.signal === s.toUpperCase() ? (s === "long" ? "val-pos" : "val-neg") : (h[s].status === "edge" ? "" : "val-muted")}">${pct(h[s].probability)}</strong> <span class="val-muted">/ ${pct(h[s].break_even)}</span></td><td>${statusTag(h[s])}</td>`
-      : `<td class="num">—</td><td></td>`;
+      : `<span class="status-text">Neutral</span>`;
+    const side = (s) => {
+      if (!h[s]) return `<td class="num">—</td><td></td>`;
+      const odds = h.signal === s.toUpperCase()
+        ? `<strong class="${s === "long" ? "val-pos" : "val-neg"}">${pct(h[s].probability)}</strong>`
+        : `<span class="${h[s].status === "edge" ? "val-flat" : "val-muted"}">${pct(h[s].probability)}</span>`;
+      return `<td class="num">${odds} <span class="val-muted">/ ${pct(h[s].break_even)}</span></td><td>${statusText(h[s])}</td>`;
+    };
     return `
       <tr class="${key === currentTimeframe ? "is-current" : ""}" onclick="setTimeframe('${key}')" title="Show ${key}">
         <td><strong>${key}</strong> <span class="val-muted">· ${esc(h.candle_interval)} candles</span></td>
-        <td class="num">±${formatNumber(h.tp_pct, 2)}%</td>
+        <td class="num val-muted">±${formatNumber(h.tp_pct, 2)}%</td>
         ${side("long")}
         ${side("short")}
         <td>${sig}</td>
@@ -447,7 +585,7 @@ function horizonsBlock(coin) {
       </section>`;
   }
   return `
-    <section class="detail-block detail-wide detail-table">
+    <section class="detail-block detail-wide detail-table detail-quiet">
       <h3>Win probability by horizon <span class="h3-note">probability / needed to break even</span></h3>
       <table class="data-table">
         <thead>
@@ -464,57 +602,71 @@ function horizonsBlock(coin) {
     </section>`;
 }
 
-function reliabilityBars(rel) {
+// Reliability bars stay folded behind a one-line summary; remember which are open across re-renders
+window.openReliability = window.openReliability || {};
+
+function reliabilityBlock(symbol, side, rel) {
   if (!rel || !rel.length) return "";
+  const gaps = rel.map((b) => Math.abs(b.observed - b.predicted));
+  const avg = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+  const worst = rel[gaps.indexOf(Math.max(...gaps))];
+  const key = `${symbol}:${side}`;
   return `
-    <div class="reliability" aria-label="Predicted versus observed win rate on unseen data">
-      ${rel.map((b) => `
-        <div class="rel-row">
-          <span class="rel-label">said ${pct(b.predicted)}</span>
-          <span class="rel-track"><span class="rel-fill" style="width:${Math.min(100, b.observed * 100)}%"></span><span class="rel-mark" style="left:${Math.min(100, b.predicted * 100)}%"></span></span>
-          <span class="rel-value">won ${pct(b.observed)}</span>
-        </div>`).join("")}
-    </div>`;
+    <details class="reliability" ${window.openReliability[key] ? "open" : ""} ontoggle="window.openReliability['${key}'] = this.open">
+      <summary data-tooltip-title="Said vs won" data-tooltip="Test predictions split into five equal groups, comparing the average odds the models gave with how often those trades won. Open to see each group: the tick is what the models said, the bar is what happened.">
+        <span>Said vs won: off by ${(avg * 100).toFixed(0)} pts on average <span class="val-muted">(worst: said ${pct(worst.predicted)}, won ${pct(worst.observed)})</span></span>
+        ${ICON_CHEVRON}
+      </summary>
+      <div class="rel-rows" aria-label="Predicted versus observed win rate on unseen data">
+        ${rel.map((b) => `
+          <div class="rel-row">
+            <span class="rel-label">said ${pct(b.predicted)}</span>
+            <span class="rel-track"><span class="rel-fill" style="width:${Math.min(100, b.observed * 100)}%"></span><span class="rel-mark" style="left:${Math.min(100, b.predicted * 100)}%"></span></span>
+            <span class="rel-value">won ${pct(b.observed)}</span>
+          </div>`).join("")}
+      </div>
+    </details>`;
 }
 
 function evidenceSide(coin, side, h) {
   const d = h[side];
   if (!d) return "";
   const m = d.metrics || {};
-  const r = m.replay || {};
-  const price = Number(coin.current_price);
-  const up = side === "long";
-  const tpPrice = isNum(price) && price ? formatPrice(price * (1 + (up ? 1 : -1) * h.tp_pct / 100)) : null;
-  const slPrice = isNum(price) && price ? formatPrice(price * (1 + (up ? -1 : 1) * h.sl_pct / 100)) : null;
-  const replay = r.trades
-    ? `${r.trades} trades · ${pct(r.win_rate)} won · ${signed(r.avg_net_return_pct, 2)}% avg after fees`
-    : "never cleared break-even";
+  const head = `<div class="risk-side-head"><span>${side === "long" ? "Long" : "Short"}</span></div>`;
+
+  if (d.status !== "edge") {
+    const reason = m.reason ? ` ${esc(m.reason.charAt(0).toUpperCase() + m.reason.slice(1))}.` : "";
+    const verdict = d.status === "insufficient_data" ? "Too little test data to judge." : "Did not beat the base rate on unseen data.";
+    return `
+      <div class="evidence-side">
+        ${head}
+        <p class="side-note">${verdict}${reason}</p>
+      </div>`;
+  }
+
   return `
     <div class="evidence-side">
-      <div class="risk-side-head"><span>${up ? "Long" : "Short"} · ${pct(d.probability)}</span>${statusTag(d)}</div>
+      ${head}
       <dl class="kv">
-        ${tpPrice ? `<dt>Take-profit / stop</dt><dd>${tpPrice} / ${slPrice}</dd>` : ""}
-        <dt>Needed to break even</dt><dd>${pct(d.break_even)}</dd>
-        ${d.model_probability !== null && d.status !== "edge" ? `<dt>Model said (not trusted)</dt><dd class="val-muted">${pct(d.model_probability)}</dd>` : ""}
         <dt>Recent base rate</dt><dd>${pct(d.base_rate)}</dd>
-        ${isNum(m.n_independent) ? `<dt>Independent test trades</dt><dd>${m.n_independent.toLocaleString()}</dd>` : ""}
         ${isNum(m.brier_skill) ? `<dt data-tooltip-title="Brier skill" data-tooltip="How much better the probabilities scored than always quoting the base rate. Above 0 is better; the lower bound is the 90% worst case.">Skill vs base rate</dt><dd>${signed(m.brier_skill, 3)} <span class="val-muted">(≥ ${signed(m.brier_skill_lower, 3)})</span></dd>` : ""}
         ${isNum(m.shrink) && m.shrink < 0.995 ? `<dt data-tooltip-title="Overconfidence correction" data-tooltip="On unseen data the raw odds ran too far from the usual win rate, so they are pulled back toward it by this much before being shown.">Odds tempered</dt><dd>${pct(1 - m.shrink)} toward base rate</dd>` : ""}
         ${isNum(m.auc) ? `<dt data-tooltip-title="AUC" data-tooltip="How well the model ranks winners above losers. 0.5 is a coin flip, 1.0 is perfect.">Ranking (AUC)</dt><dd>${formatNumber(m.auc, 2)}</dd>` : ""}
-        ${m.replay ? `<dt data-tooltip-title="Replay on unseen data" data-tooltip="Take the trade every time the odds cleared break-even, one position at a time, on history the model never saw. Signals only fire for sides whose replay made money after fees on 10+ trades.">When it said go</dt><dd>${esc(replay)}</dd>` : ""}
       </dl>
-      ${m.reason ? `<p class="detail-note">${esc(m.reason)}</p>` : ""}
-      ${reliabilityBars(d.reliability)}
+      ${reliabilityBlock(coin.symbol, side, d.reliability)}
     </div>`;
 }
 
+// Supporting statistics behind the edge verdicts; skipped when neither side has an edge to back up
 function evidenceBlock(coin) {
   const h = horizonData(coin);
-  if (!h) return "";
+  if (!h || !["long", "short"].some((s) => h[s] && h[s].status === "edge")) return "";
+  const n = ["long", "short"].map((s) => h[s] && (h[s].metrics || {}).n_independent).find((v) => isNum(v));
+  const tested = isNum(n) ? `tested on ${n.toLocaleString()} independent trades the models never saw` : "tested on history the models never saw";
   return `
-    <section class="detail-block detail-wide">
-      <h3>Evidence · ${currentTimeframe} <span class="h3-note">${esc(h.candle_interval)} candles × ${h.horizon_bars} · tested on history the models never saw</span></h3>
-      <div class="evidence-grid">
+    <section class="detail-block detail-wide detail-quiet">
+      <h3>Evidence · ${currentTimeframe} <span class="h3-note">${esc(h.candle_interval)} candles × ${h.horizon_bars} · ${tested}</span></h3>
+      <div class="sides-grid">
         ${evidenceSide(coin, "long", h)}
         ${evidenceSide(coin, "short", h)}
       </div>
@@ -523,62 +675,23 @@ function evidenceBlock(coin) {
 
 function bookBlock(depth) {
   if (!isNum(depth.bid_pct) || depth.available === false) {
-    return `<section class="detail-block"><h3>Order book</h3><p class="detail-note">No live order book data for this pair yet.</p></section>`;
+    return `<section class="detail-block detail-wide detail-inline detail-quiet"><h3>Order book</h3><span class="inline-stats val-muted">No live order book data for this pair yet.</span></section>`;
   }
   const imb = depth.book_imbalance_pct || 0;
-  const tag = imb >= 12 ? `<span class="tag tag-pos">Bid-heavy</span>` : (imb <= -12 ? `<span class="tag tag-neg">Ask-heavy</span>` : `<span class="tag">Balanced</span>`);
+  const lean = imb >= 12 ? "Bid-heavy" : (imb <= -12 ? "Ask-heavy" : "Balanced");
+  const tip = [
+    `Bids ${formatUsdCompact(depth.bid_depth_usd)} · ${depth.bid_pct}%`,
+    `Asks ${formatUsdCompact(depth.ask_depth_usd)} · ${depth.ask_pct}%`,
+    `Microprice skew ${signed(depth.microprice_skew_bps, 1)} bps`,
+    "Top 20 levels of the Binance perpetual. Shown for context; no model uses it.",
+  ].join("\n");
   return `
-    <section class="detail-block">
-      <h3>Order book ${tag}</h3>
-      <dl class="kv">
-        <dt>Bid depth</dt><dd>${formatUsdCompact(depth.bid_depth_usd)} · ${depth.bid_pct}%</dd>
-        <dt>Ask depth</dt><dd>${formatUsdCompact(depth.ask_depth_usd)} · ${depth.ask_pct}%</dd>
-        <dt>Imbalance</dt><dd class="${toneClass(imb, 1)}">${signed(imb, 1)}%</dd>
-        <dt>Spread</dt><dd>${formatNumber(depth.spread_bps, 1)} bps</dd>
-        <dt>Microprice skew</dt><dd>${signed(depth.microprice_skew_bps, 1)} bps</dd>
-      </dl>
-      ${depth.summary ? `<p class="detail-note">${esc(depth.summary)}</p>` : ""}
-    </section>`;
-}
-
-function riskBlock(risk) {
-  if (!isNum(risk.long_risk_score) || !isNum(risk.short_risk_score)) {
-    return `<section class="detail-block"><h3>Trade risk</h3><p class="detail-note">Risk scores are not available yet.</p></section>`;
-  }
-  const bias = BIAS_LABELS[risk.asymmetric_bias] || BIAS_LABELS.BALANCED;
-  const side = (label, score, level, summary) => `
-    <div class="risk-side">
-      <div class="risk-side-head"><span>${label}</span><span class="risk-num ${riskLevelClass(level)}">${score} · ${esc(titleCase(level || "Low"))}</span></div>
-      <div class="meter"><span class="${riskLevelClass(level)}" style="width:${score}%"></span></div>
-      ${summary ? `<p>${esc(summary.replace(/^[A-Z]+ Risk:\s*/, ""))}</p>` : ""}
-    </div>`;
-  return `
-    <section class="detail-block">
-      <h3>Trade risk <span class="tag ${bias.tag}">${bias.label}</span></h3>
-      ${side("Long", risk.long_risk_score, risk.long_risk_level, risk.long_risk_summary)}
-      ${side("Short", risk.short_risk_score, risk.short_risk_level, risk.short_risk_summary)}
-      <p class="detail-note">${risk.max_recommended_leverage ? `Max leverage <strong>${esc(risk.max_recommended_leverage)}</strong>. ` : ""}Rule-based hazard scores (0–100), not probabilities.</p>
-    </section>`;
-}
-
-function residualBlock(coin) {
-  const models = coin.model_predictions || {};
-  const names = MODEL_ORDER.filter((m) => models[m]);
-  if (!names.length) {
-    return `<section class="detail-block"><h3>15m residual alpha</h3><p class="detail-note">Not trained on 5m candles yet.</p></section>`;
-  }
-  const rows = names.map((m) => {
-    const d = models[m];
-    return `<dt>${m}</dt><dd><span class="${toneClass(d.expected_residual_alpha_bps, 1)}">${signed(d.expected_residual_alpha_bps, 1)} bps</span>${isNum(d.hit_rate) ? ` <span class="val-muted">· ${pct(d.hit_rate)} hit</span>` : ""}</dd>`;
-  }).join("");
-  return `
-    <section class="detail-block">
-      <h3 data-tooltip-title="15m residual alpha" data-tooltip="Expected move versus a BTC-hedged benchmark over 15 minutes. Hit rates are from an unseen test slice. Secondary to the win probabilities.">15m residual alpha</h3>
-      <dl class="kv">
-        <dt>Ensemble</dt><dd class="${toneClass(coin.expected_residual_alpha_bps, 1)}">${signed(coin.expected_residual_alpha_bps, 1)} bps</dd>
-        ${rows}
-      </dl>
-      <p class="detail-note">BTC-hedged expected move. Secondary signal; hit rates from unseen test data.</p>
+    <section class="detail-block detail-wide detail-inline detail-quiet" data-tooltip-title="Order book · top 20 levels" data-tooltip="${esc(tip)}">
+      <h3>Order book <span class="tag">${lean}</span></h3>
+      <span class="inline-stats">
+        <span><span class="val-muted">Imbalance</span> <strong>${signed(imb, 1)}%</strong></span>
+        <span><span class="val-muted">Spread</span> <strong>${formatNumber(depth.spread_bps, 1)} bps</strong></span>
+      </span>
     </section>`;
 }
 
@@ -657,7 +770,7 @@ function renderCoinCard(symbol, flash = false) {
       ${winCell(coin, "short")}
       ${modelsCell(coin)}
       ${bookCell(coin.orderbook_depth || {})}
-      ${riskCell(coin.trade_risk || {})}
+      ${riskCell(coin)}
 
       <div class="c-actions">
         <button class="icon-btn btn-remove" onclick="event.stopPropagation(); removeCoin('${symbol}')" aria-label="Remove ${esc(base)}" title="Remove">${ICON_CLOSE}</button>
@@ -669,11 +782,10 @@ function renderCoinCard(symbol, flash = false) {
     <div class="row-details" id="${detailsId}" ${isExpanded ? "" : "hidden"}>
       ${isExpanded ? `
         <div class="details-grid">
+          ${tradeBlock(coin)}
           ${horizonsBlock(coin)}
           ${evidenceBlock(coin)}
-          ${riskBlock(coin.trade_risk || {})}
           ${bookBlock(coin.orderbook_depth || {})}
-          ${residualBlock(coin)}
         </div>
         ${detailsFooter(coin, symbol)}
       ` : ""}
