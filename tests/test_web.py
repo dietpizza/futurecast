@@ -306,3 +306,19 @@ def test_tracked_coins_persistence_across_app_reboots(tmp_path):
         assert "B-TRUTH_USDT" in coins3
         assert "B-SOL_USDT" in coins3
 
+
+
+def test_watchlist_starts_empty_without_default_coins(tmp_path):
+    """No saved coins means an empty watchlist, including after the user removes every coin."""
+    storage_file = tmp_path / "saved_coins.json"
+
+    with TestClient(create_app(live_mode=False, persistence_path=storage_file)) as client:
+        assert client.get("/api/coins").json() == []
+        assert client.post("/api/coins", json={"symbol": "B-WAL_USDT"}).status_code == 200
+
+    with TestClient(create_app(live_mode=False, persistence_path=storage_file)) as client:
+        assert [c["symbol"] for c in client.get("/api/coins").json()] == ["B-WAL_USDT"]
+        assert client.delete("/api/coins/B-WAL_USDT").status_code == 200
+
+    with TestClient(create_app(live_mode=False, persistence_path=storage_file)) as client:
+        assert client.get("/api/coins").json() == []

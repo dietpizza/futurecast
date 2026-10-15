@@ -61,11 +61,9 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # Startup: populate initial symbols (CoinDCX only)
-        # Priority: explicit CLI initial_symbols -> saved symbols -> default presets
-        saved = manager.load_persisted_symbols() if initial_symbols is None else None
-        default_symbols = ["B-DOGE_USDT", "B-SOL_USDT", "B-PEPE_USDT", "B-BLUR_USDT", "B-AVA_USDT", "B-TRUTH_USDT"]
-        symbols = initial_symbols or (saved if saved else default_symbols)
+        # Startup: restore the coins the user added (explicit initial_symbols win, e.g. from tests).
+        # There are no default coins: with nothing saved, the watchlist starts empty.
+        symbols = initial_symbols if initial_symbols is not None else manager.load_persisted_symbols()
         for s in symbols:
             try:
                 manager.add_symbol(s, persist=False)
