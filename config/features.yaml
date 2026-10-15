@@ -12,7 +12,7 @@ microstructure:
   ofi_windows_min: [5, 15]
 
 derivatives:
-  funding_ema_window_min: 4320  # 3 days at 1-min
+  funding_ema_window_min: 4320  # trailing funding-rate mean: 3 days of clock time (minutes, not candles)
   oi_delta_windows_min: [15, 60]
   oi_divergence_window_min: 60
 

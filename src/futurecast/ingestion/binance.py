@@ -1,12 +1,13 @@
 """Binance USD-M futures public market data (Strictly Read-Only / Public Endpoints).
 
-Every candle, live price and order book for a CoinDCX pair comes from the Binance
-perpetual behind it: B-SOL_USDT -> SOLUSDT, B-1000PEPE_USDT -> 1000PEPEUSDT.
+Every candle, funding rate, live price and order book for a CoinDCX pair comes from the
+Binance perpetual behind it: B-SOL_USDT -> SOLUSDT, B-1000PEPE_USDT -> 1000PEPEUSDT.
 Zero API keys or trading credentials required.
 """
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 import logging
 import threading
@@ -14,6 +15,7 @@ import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import httpx
+import numpy as np
 import pandas as pd
 
 from futurecast.ingestion.factory import extract_base_and_quote
@@ -29,6 +31,9 @@ _UNIT_PREFIXES: Tuple[Tuple[str, int], ...] = (("", 1), ("1000", 1_000), ("10000
 _KLINE_PAGE = 1000  # klines weight is 5 up to 1000 rows, 10 above: 1000-row pages are cheapest per candle
 _DEPTH_LIMITS = (5, 10, 20, 50, 100, 500, 1000)
 _WEIGHT_LIMIT_1M = 2400
+_FUNDING_PAGE = 1000
+_FUNDING_LIMIT_5M = 500  # fundingRate has its own budget, outside the weight count: 500 requests / 5 min / IP
+_DAY_MS = 86_400_000  # funding settles every 1h, 4h or 8h, so a day back always holds a settlement
 
 
 def interval_to_ms(interval: str) -> int:
@@ -72,6 +77,7 @@ class BinancePublicClient:
         max_retries: int = 3,
         markets_ttl_sec: float = 3600.0,
         weight_budget: int = int(_WEIGHT_LIMIT_1M * 0.8),
+        funding_budget: int = int(_FUNDING_LIMIT_5M * 0.8),
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
@@ -82,6 +88,11 @@ class BinancePublicClient:
         self._markets_lock = threading.Lock()
         self._perpetuals: Dict[str, Dict[str, Any]] = {}
         self._perpetuals_at = 0.0
+        self.funding_budget = funding_budget
+        self._funding_lock = threading.Lock()
+        self._funding_calls: deque = deque()
+        # Binance symbol -> (covered from ms, downloaded at ms, events with columns time, funding_rate)
+        self._funding: Dict[str, Tuple[int, int, pd.DataFrame]] = {}
 
     @property
     def client(self) -> httpx.Client:
@@ -201,6 +212,73 @@ class BinancePublicClient:
         )
         return book
 
+    # ───────── funding rates ─────────
+
+    def _funding_slot(self) -> None:
+        """Wait for room in the fundingRate budget (500 requests per 5 minutes, not reported in weight headers)."""
+        with self._funding_lock:
+            now = time.monotonic()
+            calls = self._funding_calls
+            while calls and now - calls[0] >= 300:
+                calls.popleft()
+            at = max(now, calls[-self.funding_budget] + 300) if len(calls) >= self.funding_budget else now
+            calls.append(at)
+        if at > now:
+            logger.warning(f"Binance funding-rate budget used up; pausing {at - now:.0f}s")
+            time.sleep(at - now)
+
+    def fetch_funding_rates(self, symbol: str, start_ms: int, end_ms: Optional[int] = None) -> pd.DataFrame:
+        """Settled funding rates of the pair's Binance perpetual between `start_ms` and `end_ms`, oldest first.
+
+        Columns: timestamp (settlement time) and funding_rate (fraction paid per funding interval;
+        a 1000x listing pays the same rate). `start_ms` is rounded down to a UTC day so nearby
+        requests share a download. A download is reused while it was made at or after `end_ms`
+        (default: now), since no settlement before `end_ms` can be missing from it; otherwise only
+        the settlements after the newest one held are fetched.
+        """
+        empty = pd.DataFrame(columns=["timestamp", "funding_rate"])
+        market = self._require(symbol)
+        if market is None:
+            return empty
+        now_ms = int(time.time() * 1000)
+        end_ms = now_ms if end_ms is None else int(end_ms)
+        start_ms = int(start_ms) // _DAY_MS * _DAY_MS
+
+        with self._funding_lock:
+            cached = self._funding.get(market.symbol)
+        if cached is None or cached[0] > start_ms:
+            cached = (start_ms, 0, pd.DataFrame({"time": pd.Series(dtype="int64"), "funding_rate": pd.Series(dtype=float)}))
+        covered_from, fetched_at, events = cached
+        if fetched_at < end_ms:
+            cursor = int(events["time"].iloc[-1]) + 1 if len(events) else covered_from
+            rows: List[dict] = []
+            while True:
+                self._funding_slot()
+                page = self._get("/fapi/v1/fundingRate", {
+                    "symbol": market.symbol, "startTime": cursor, "limit": _FUNDING_PAGE,
+                })
+                rows.extend(page)
+                if len(page) < _FUNDING_PAGE:
+                    break
+                cursor = int(page[-1]["fundingTime"]) + 1
+            if rows:
+                new = pd.DataFrame({
+                    "time": [int(r["fundingTime"]) for r in rows],
+                    "funding_rate": pd.to_numeric([r.get("fundingRate") for r in rows], errors="coerce"),
+                }).dropna()
+                events = (pd.concat([events, new]) if len(events) else new)
+                events = events.drop_duplicates("time").sort_values("time").reset_index(drop=True)
+            with self._funding_lock:
+                self._funding[market.symbol] = (covered_from, now_ms, events)
+
+        events = events[(events["time"] >= start_ms) & (events["time"] <= end_ms)]
+        if events.empty:
+            return empty
+        return pd.DataFrame({
+            "timestamp": pd.to_datetime(events["time"].to_numpy(), unit="ms", utc=True),
+            "funding_rate": events["funding_rate"].to_numpy(dtype=float),
+        })
+
     # ───────── model candle history (closed candles only) ─────────
 
     def fetch_candle_history(
@@ -209,12 +287,15 @@ class BinancePublicClient:
         interval: str = "5m",
         bars: int = 1500,
         end_time_ms: Optional[int] = None,
+        funding: bool = False,
     ) -> Tuple[pd.DataFrame, Optional[str]]:
         """Newest `bars` fully closed candles for a CoinDCX pair from its Binance perpetual, oldest first.
 
         Pages walk backward from the last closed candle, so the still-forming candle is never
-        included. Prices are Binance's (a 1000x listing stays in 1000x units). Returns
-        (candles, source); source is None when Binance has no market for the pair.
+        included. Prices are Binance's (a 1000x listing stays in 1000x units). With `funding`,
+        a funding_rate column holds the latest rate settled before each candle closed (NaN before
+        the first settlement on record). Returns (candles, source); source is None when Binance
+        has no market for the pair.
         """
         empty = pd.DataFrame(columns=self._HISTORY_COLS)
         market = self._require(symbol)
@@ -250,4 +331,20 @@ class BinancePublicClient:
         df = df[df["time"] <= last_closed_open].drop_duplicates("time").sort_values("time").tail(bars)
         df["timestamp"] = pd.to_datetime(df["time"], unit="ms", utc=True)
         df["symbol"] = symbol
-        return df[self._HISTORY_COLS].reset_index(drop=True), f"binance:{market.symbol}"
+        cols = list(self._HISTORY_COLS)
+        if funding:
+            close_ms = df["time"].to_numpy() + step
+            events = self.fetch_funding_rates(symbol, int(close_ms[0]) - step - _DAY_MS, int(close_ms[-1]))
+            df["funding_rate"] = funding_known_at(close_ms, events)
+            cols.append("funding_rate")
+        return df[cols].reset_index(drop=True), f"binance:{market.symbol}"
+
+
+def funding_known_at(close_ms: np.ndarray, events: pd.DataFrame) -> np.ndarray:
+    """Latest funding rate settled strictly before each candle close time (ms), NaN before the first."""
+    if events.empty:
+        return np.full(len(close_ms), np.nan)
+    settled_ms = events["timestamp"].to_numpy(dtype="datetime64[ms]").astype("int64")
+    idx = np.searchsorted(settled_ms, close_ms, side="left") - 1
+    rates = events["funding_rate"].to_numpy(dtype=float)
+    return np.where(idx >= 0, rates[np.clip(idx, 0, None)], np.nan)

@@ -65,7 +65,7 @@ HORIZONS_BY_INTERVAL: Dict[str, Dict[str, int]] = {
 }
 SIDES = ("long", "short")
 MODEL_NAMES = ("LightGBM", "XGBoost", "CatBoost")
-FORMAT_VERSION = 4
+FORMAT_VERSION = 5
 
 _EPS = 1e-6
 

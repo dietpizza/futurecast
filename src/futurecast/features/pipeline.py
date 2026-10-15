@@ -65,7 +65,7 @@ class FeaturePipeline:
             aligned_df,
             target_symbol=self.target_symbol,
             benchmark_symbol=self.primary_benchmark,
-            funding_ema_window=self.config.derivatives.funding_ema_window_min,
+            funding_window_min=self.config.derivatives.funding_ema_window_min,
             oi_delta_windows=self.config.derivatives.oi_delta_windows_min,
             divergence_window=self.config.derivatives.oi_divergence_window_min,
         )

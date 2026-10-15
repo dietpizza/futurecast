@@ -58,7 +58,7 @@ class MicrostructureFeaturesConfig(BaseModel):
 
 
 class DerivativesFeaturesConfig(BaseModel):
-    funding_ema_window_min: int = 4320
+    funding_ema_window_min: int = 4320  # trailing funding mean, in clock minutes (3 days), not candles
     oi_delta_windows_min: List[int] = Field(default_factory=lambda: [15, 60])
     oi_divergence_window_min: int = 60
 

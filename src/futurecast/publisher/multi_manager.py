@@ -195,12 +195,13 @@ class SymbolWorker:
     # ───────── candles ─────────
 
     def _fetch_aligned(self, client: BinancePublicClient, interval: str, bars: int) -> Tuple[pd.DataFrame, Optional[str]]:
-        target, source = client.fetch_candle_history(self.symbol, interval, bars)
+        """Closed candles with each coin's settled funding rate, target and benchmarks on one time grid."""
+        target, source = client.fetch_candle_history(self.symbol, interval, bars, funding=True)
         if target.empty:
             return pd.DataFrame(), None
         benches = {}
         for bench in self.benchmarks:
-            bench_df, _ = client.fetch_candle_history(bench, interval, bars)
+            bench_df, _ = client.fetch_candle_history(bench, interval, bars, funding=True)
             if bench_df.empty:
                 return pd.DataFrame(), None
             benches[bench] = bench_df
