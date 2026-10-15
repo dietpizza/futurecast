@@ -144,7 +144,7 @@ def test_api_coins_and_multi_model_predictions(test_app):
             # Offline mode renders synthetic candles and says so
             assert coin["has_data"] is True
             assert coin["data_source"] == "synthetic (offline mode)"
-            assert "trade_risk" in coin
+            assert coin["trade_risk"] == {}  # risk comes only from trained models
             assert "orderbook_depth" in coin
             # Untrained coins never get invented models, metrics or probabilities
             assert coin["is_custom_trained"] is False
@@ -155,11 +155,12 @@ def test_api_coins_and_multi_model_predictions(test_app):
             assert "timeframe_forecasts" not in coin
 
 
-def test_trained_coin_serves_calibrated_trade_probabilities(tmp_path):
+def test_trained_coin_serves_calibrated_trade_probabilities_and_risk(tmp_path):
     from futurecast.features.pipeline import FeaturePipeline
     from futurecast.ingestion.factory import resolve_benchmarks, sanitize_symbol_for_filename
     from futurecast.ingestion.storage import align_cross_asset_data
     from futurecast.models.trade_probability import TradeModelConfig, TradeProbabilityModel, trade_model_path
+    from futurecast.models.trade_risk import TradeRiskConfig, TradeRiskModel, risk_model_path
     from futurecast.publisher.multi_manager import _synthetic_candles
     import numpy as np
 
@@ -172,6 +173,9 @@ def test_trained_coin_serves_calibrated_trade_probabilities(tmp_path):
     model = TradeProbabilityModel(TradeModelConfig(interval="5m", horizons={"15m": 3}, max_rounds=40))
     model.fit(feats, aligned[f"{sym}_close"], aligned[f"{sym}_high"], aligned[f"{sym}_low"])
     model.save(trade_model_path(tmp_path / "models", f"{sanitize_symbol_for_filename(sym)}_5m"))
+    risk = TradeRiskModel(TradeRiskConfig(interval="5m", horizons={"15m": 3}, max_rounds=40))
+    risk.fit(feats, aligned[f"{sym}_close"], aligned[f"{sym}_high"], aligned[f"{sym}_low"])
+    risk.save(risk_model_path(tmp_path / "models", f"{sanitize_symbol_for_filename(sym)}_5m"))
 
     app = create_app(initial_symbols=[sym], live_mode=False,
                      persistence_path=tmp_path / "coins.json", models_dir=tmp_path / "models")
@@ -189,6 +193,17 @@ def test_trained_coin_serves_calibrated_trade_probabilities(tmp_path):
             assert h[side]["status"] in ("edge", "no_edge", "insufficient_data")
             if h[side]["status"] != "edge":
                 assert h[side]["probability"] == h[side]["base_rate"]
+
+        risk = coin["trade_risk"]
+        assert set(risk) == {"15m"}
+        r = risk["15m"]
+        assert r["bias"] in ("LONG_RISKIER", "SHORT_RISKIER", "BALANCED")
+        for side in ("long", "short"):
+            assert r[side]["worst_move_pct"] > 0
+            assert 1 <= r[side]["score"] <= 99
+            assert r[side]["level"] in ("LOW", "MODERATE", "HIGH", "EXTREME")
+            assert r[side]["max_leverage"] in (1, 2, 3, 5, 10, 20)
+            assert r[side]["status"] in ("edge", "no_edge", "insufficient_data")
 
 
 def test_api_add_and_delete_coin(test_app):

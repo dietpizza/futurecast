@@ -1,5 +1,5 @@
 /**
- * Horizon selector. Each horizon has its own trained win-probability models on the
+ * Horizon selector. Each horizon has its own trained win-probability and risk models on the
  * server; switching only changes which one the watchlist shows.
  */
 

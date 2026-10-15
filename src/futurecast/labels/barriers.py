@@ -1,4 +1,4 @@
-"""Take-profit / stop-loss trade outcome labels.
+"""Take-profit / stop-loss trade outcome labels (plus the adverse excursion used for trade risk).
 
 A trade is entered at the close of bar t and held for at most `horizon` bars:
 
@@ -122,5 +122,27 @@ def first_touch_labels(
             pnl = np.where(win, tp_m, np.where(stopped, -sl_m, timeout_pnl))
             cols[f"{side}_win"][:m] = np.where(known, win.astype(float), np.nan)
             cols[f"{side}_pnl"][:m] = np.where(known, pnl, np.nan)
+
+    return pd.DataFrame(cols, index=close.index)
+
+
+def adverse_excursion(close: pd.Series, high: pd.Series, low: pd.Series, horizon: int) -> pd.DataFrame:
+    """Worst move against a position entered at the close of bar t, over bars t+1 .. t+horizon.
+
+    Columns long_mae / short_mae are fractions of entry (0 when price never went against
+    the side); NaN where the window runs past the data.
+    """
+    n = len(close)
+    cols = {name: np.full(n, np.nan) for name in ("long_mae", "short_mae")}
+    m = n - horizon
+
+    if m > 0:
+        entry = close.to_numpy(dtype=float)[:m]
+        fut_low = sliding_window_view(low.to_numpy(dtype=float)[1:], horizon)[:m].min(axis=1)
+        fut_high = sliding_window_view(high.to_numpy(dtype=float)[1:], horizon)[:m].max(axis=1)
+        known = np.isfinite(entry) & (entry > 0)
+        safe = np.where(known, entry, 1.0)
+        cols["long_mae"][:m] = np.where(known, np.maximum(0.0, 1.0 - fut_low / safe), np.nan)
+        cols["short_mae"][:m] = np.where(known, np.maximum(0.0, fut_high / safe - 1.0), np.nan)
 
     return pd.DataFrame(cols, index=close.index)

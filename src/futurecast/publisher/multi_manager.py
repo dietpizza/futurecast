@@ -4,9 +4,9 @@ Every model input comes from fully closed 5m and 15m candles of the Binance perp
 behind the CoinDCX pair (BinancePublicClient.fetch_candle_history). New candles are pulled
 when one closes; between candles only the displayed Binance price and the order book refresh.
 
-- 5m candles: residual-alpha models, trade risk, microstructure, and the 5m / 15m / 1h
-  win-probability horizons.
-- 15m candles: the 4h / 8h win-probability horizons (more history per candle).
+- 5m candles: residual-alpha models, microstructure, and the 5m / 15m / 1h win-probability
+  and trade-risk horizons.
+- 15m candles: the 4h / 8h win-probability and trade-risk horizons (more history per candle).
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from futurecast.models.trade_probability import (
     TradeProbabilityModel,
     trade_model_path,
 )
+from futurecast.models.trade_risk import TradeRiskConfig, TradeRiskModel, risk_model_path
 from futurecast.paths import resolve
 from futurecast.schema import ForecastEvent
 
@@ -94,7 +95,7 @@ def _json_safe(obj: Any) -> Any:
 
 
 def _event_payload(ev: ForecastEvent) -> Dict[str, Any]:
-    """15m residual-alpha model output, order book and trade risk for the latest 5m candle."""
+    """15m residual-alpha model output and order book for the latest 5m candle."""
     return {
         "timestamp": ev.timestamp.isoformat(),
         "benchmark_price": ev.benchmark_price,
@@ -104,7 +105,6 @@ def _event_payload(ev: ForecastEvent) -> Dict[str, Any]:
         "signal": getattr(ev.signal, "value", str(ev.signal)),
         "confidence_percentile": ev.confidence_percentile,
         "microstructure_context": ev.microstructure_context,
-        "trade_risk": ev.trade_risk,
         "orderbook_depth": ev.orderbook_depth,
         "model_predictions": {name: item.model_dump(mode="json") for name, item in ev.model_predictions.items()},
         "cross_verification": ev.cross_verification.model_dump(mode="json") if ev.cross_verification else None,
@@ -144,7 +144,11 @@ class SymbolWorker:
         self.trade_models: Dict[str, Optional[TradeProbabilityModel]] = {
             iv: TradeProbabilityModel.load(self._trade_path(iv)) for iv in CANDLE_MINUTES
         }
-        self.is_custom_trained = all(self.trade_models.values())
+        self.risk_models: Dict[str, Optional[TradeRiskModel]] = {
+            iv: TradeRiskModel.load(self._risk_path(iv)) for iv in CANDLE_MINUTES
+        }
+        # Coins trained before the risk model existed count as untrained, so they get retrained
+        self.is_custom_trained = all(self.trade_models.values()) and all(self.risk_models.values())
         self.training_status = "trained" if self.is_custom_trained else "untrained"
         self.training_error: Optional[str] = None
         self.training_report: Dict[str, Any] = {}
@@ -153,6 +157,7 @@ class SymbolWorker:
         self.candles: Dict[str, pd.DataFrame] = {iv: pd.DataFrame() for iv in CANDLE_MINUTES}
         self.data_source: Optional[str] = None
         self.trade_probabilities: Dict[str, Any] = {}
+        self.trade_risk: Dict[str, Any] = {}
         self.live_price: Optional[float] = None
         self.orderbook: Dict[str, Any] = {}
         self.latest_event: Optional[ForecastEvent] = None
@@ -162,6 +167,9 @@ class SymbolWorker:
 
     def _trade_path(self, interval: str) -> Path:
         return trade_model_path(self.models_dir, f"{self.clean_symbol}_{interval}")
+
+    def _risk_path(self, interval: str) -> Path:
+        return risk_model_path(self.models_dir, f"{self.clean_symbol}_{interval}")
 
     def _make_engine(self) -> PureForecastEngine:
         from futurecast.publisher.broadcaster import SignalBroadcaster
@@ -226,7 +234,7 @@ class SymbolWorker:
                     self.candles[iv] = pd.concat([have, new_rows]).tail(LIVE_BARS)
                     if iv == ENGINE_INTERVAL:
                         self._feed_engine(new_rows)
-                self._update_trade_probabilities(iv)
+                self._update_trade_models(iv)
             updated.append(iv)
         return updated
 
@@ -241,7 +249,7 @@ class SymbolWorker:
             self.data_source = "synthetic (offline mode)"
             self._load_engine(self.candles[ENGINE_INTERVAL])
             for iv in CANDLE_MINUTES:
-                self._update_trade_probabilities(iv)
+                self._update_trade_models(iv)
 
     # ───────── models ─────────
 
@@ -270,27 +278,36 @@ class SymbolWorker:
                     logger.debug(f"Z-score warmup failed for {self.symbol} {name}: {err}")
         self._feed_engine(candles.iloc[[-1]])
 
-    def _update_trade_probabilities(self, interval: str) -> None:
+    def _update_trade_models(self, interval: str) -> None:
+        """Win probabilities and trade risk for this interval's horizons from its trained models."""
         for horizon in HORIZONS_BY_INTERVAL[interval]:
             self.trade_probabilities.pop(horizon, None)
-        model = self.trade_models.get(interval)
+            self.trade_risk.pop(horizon, None)
+        win_model, risk_model = self.trade_models.get(interval), self.risk_models.get(interval)
         candles = self.candles[interval]
-        if model is None or candles.empty:
+        if (win_model is None and risk_model is None) or candles.empty:
             return
         feats = self.engine.last_features
         if interval != ENGINE_INTERVAL or feats is None or feats.index[-1] != candles.index[-1]:
             feats = self.pipes[interval].generate_features(candles)
-        try:
-            self.trade_probabilities.update(model.predict_latest(feats, candles[f"{self.symbol}_close"]))
-        except Exception as err:
-            logger.warning(f"Trade probability failed for {self.symbol} {interval}: {err}")
+        close = candles[f"{self.symbol}_close"]
+        if win_model is not None:
+            try:
+                self.trade_probabilities.update(win_model.predict_latest(feats, close))
+            except Exception as err:
+                logger.warning(f"Trade probability failed for {self.symbol} {interval}: {err}")
+        if risk_model is not None:
+            try:
+                self.trade_risk.update(risk_model.predict_latest(feats, close))
+            except Exception as err:
+                logger.warning(f"Trade risk failed for {self.symbol} {interval}: {err}")
 
     def refresh_orderbook(self, client: BinancePublicClient) -> None:
         raw = client.fetch_orderbook_depth(self.symbol, 20)
         metrics = compute_orderbook_metrics(raw)
         with self._lock:
             self.orderbook = metrics
-            self.engine.refresh_trade_risk(metrics)
+            self.engine.refresh_orderbook(metrics)
 
     def _train_residual(self, aligned: pd.DataFrame, feats: pd.DataFrame) -> Tuple[MultiModelEnsemble, Dict[str, Any]]:
         """15m residual-alpha ensemble on 5m candles: purged 70/15/15 split, scored on the last slice."""
@@ -321,21 +338,24 @@ class SymbolWorker:
         self.training_status = "training"
         self.training_error = None
         client = _binance_client(self.config.assets.data_source)
-        report: Dict[str, Any] = {"data": {}, "trade": {}}
+        report: Dict[str, Any] = {"data": {}, "trade": {}, "risk": {}}
         try:
             if client.resolve(self.symbol) is None:
                 raise RuntimeError(f"no trading Binance perpetual found for {self.symbol}")
             trade_models: Dict[str, TradeProbabilityModel] = {}
+            risk_models: Dict[str, TradeRiskModel] = {}
             history: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]] = {}
             for iv in CANDLE_MINUTES:
                 aligned, source = self._fetch_aligned(client, iv, HISTORY_BARS)
                 if len(aligned) < MIN_TRAIN_BARS:
                     raise RuntimeError(f"only {len(aligned)} closed {iv} candles available (need {MIN_TRAIN_BARS})")
                 feats = self.pipes[iv].generate_features(aligned)
+                ohlc = (aligned[f"{self.symbol}_close"], aligned[f"{self.symbol}_high"], aligned[f"{self.symbol}_low"])
                 model = TradeProbabilityModel(TradeModelConfig(interval=iv, horizons=dict(HORIZONS_BY_INTERVAL[iv])))
-                report["trade"][iv] = model.fit(
-                    feats, aligned[f"{self.symbol}_close"], aligned[f"{self.symbol}_high"], aligned[f"{self.symbol}_low"]
-                )
+                report["trade"][iv] = model.fit(feats, *ohlc)
+                risk = TradeRiskModel(TradeRiskConfig(interval=iv, horizons=dict(HORIZONS_BY_INTERVAL[iv])))
+                report["risk"][iv] = risk.fit(feats, *ohlc)
+                risk_models[iv] = risk
                 report["data"][iv] = {"source": source, "candles": len(aligned),
                                       "start": str(aligned.index[0]), "end": str(aligned.index[-1])}
                 trade_models[iv] = model
@@ -353,6 +373,8 @@ class SymbolWorker:
 
         for iv, model in trade_models.items():
             model.save(self._trade_path(iv))
+        for iv, risk in risk_models.items():
+            risk.save(self._risk_path(iv))
         ensemble.save_models(self.models_dir, self.clean_symbol, meta={
             "bar_interval": ENGINE_INTERVAL,
             "horizon_minutes": RESIDUAL_HORIZON_MINUTES,
@@ -362,6 +384,7 @@ class SymbolWorker:
 
         with self._lock:
             self.trade_models = dict(trade_models)
+            self.risk_models = dict(risk_models)
             self.ensemble = ensemble
             self.engine.ensemble = ensemble
             self.engine.trainer = ensemble.models["LightGBM"]
@@ -370,7 +393,7 @@ class SymbolWorker:
             self.data_source = report["data"][ENGINE_INTERVAL]["source"]
             self._load_engine(self.candles[ENGINE_INTERVAL])
             for iv in CANDLE_MINUTES:
-                self._update_trade_probabilities(iv)
+                self._update_trade_models(iv)
             self.is_custom_trained = True
             self.training_status = "trained"
             self.training_report = report
@@ -401,6 +424,7 @@ class SymbolWorker:
                 "candle_time": str(candles.index[-1]) if not candles.empty else None,
                 "current_price": price,
                 "trade_probabilities": self.trade_probabilities,
+                "trade_risk": self.trade_risk,
                 "execution_disabled": True,
             }
             if ev is not None:

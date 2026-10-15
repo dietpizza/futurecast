@@ -62,10 +62,9 @@ class PureForecastEngine:
         self.max_buffer_size = max_buffer_size or min_buffer_size * 2
         self.bar_minutes = bar_minutes
         self._bar_buffer = pd.DataFrame()
-        # Latest state, kept so trade risk can be refreshed between candles
+        # Latest state, kept so the order book can be refreshed between candles
         self.last_features: Optional[pd.DataFrame] = None
         self.last_event: Optional[ForecastEvent] = None
-        self._last_ctx: Dict[str, Any] = {}
 
     def reset(self) -> None:
         """Drop buffered candles and z-score history (e.g. after a data gap or retrain)."""
@@ -74,23 +73,12 @@ class PureForecastEngine:
         self.last_features = None
         self.last_event = None
 
-    def refresh_trade_risk(self, orderbook_depth: Optional[Dict[str, Any]]) -> Optional[ForecastEvent]:
-        """Recompute long/short trade risk with a fresh order book, without a new candle."""
+    def refresh_orderbook(self, orderbook_depth: Optional[Dict[str, Any]]) -> Optional[ForecastEvent]:
+        """Attach a fresh order book to the latest event, without a new candle."""
         ev = self.last_event
-        if ev is None or self.last_features is None:
+        if ev is None:
             return None
-        from futurecast.features.trade_risk import evaluate_trade_risk
         ev.orderbook_depth = orderbook_depth or {}
-        ev.trade_risk = evaluate_trade_risk(
-            df=self._bar_buffer,
-            target_symbol=ev.symbol,
-            features=self.last_features,
-            microstructure_ctx=self._last_ctx,
-            expected_residual_alpha_bps=ev.expected_residual_alpha_15m_bps,
-            sector=ev.sector,
-            orderbook_ctx=ev.orderbook_depth,
-            bar_minutes=self.bar_minutes,
-        )
         return ev
 
     def feed_bars(
@@ -187,21 +175,6 @@ class PureForecastEngine:
         else:
             ctx["is_shitcoin_strategy_active"] = False
 
-        # Real-time Long / Short Trade Risk and Liquidation Hazard Evaluation
-        from futurecast.features.trade_risk import evaluate_trade_risk
-        ob_data = orderbook_depth or {}
-        risk_metrics = evaluate_trade_risk(
-            df=self._bar_buffer,
-            target_symbol=target_symbol,
-            features=latest_features,
-            microstructure_ctx=ctx,
-            expected_residual_alpha_bps=expected_bps,
-            sector=sector,
-            orderbook_ctx=ob_data,
-            bar_minutes=self.bar_minutes,
-        )
-        self._last_ctx = ctx
-
         event = ForecastEvent(
             timestamp=latest_timestamp,
             symbol=target_symbol,
@@ -214,8 +187,7 @@ class PureForecastEngine:
             signal=signal_state,
             confidence_percentile=conf_pct,
             microstructure_context=ctx,
-            trade_risk=risk_metrics,
-            orderbook_depth=ob_data,
+            orderbook_depth=orderbook_depth or {},
             execution_disabled=True,
             model_predictions=model_items,
             cross_verification=cv_summary,
