@@ -1,9 +1,8 @@
-"""Volatility regimes (hidden Markov model) and the volatility-only first-passage odds."""
+"""Volatility regimes (hidden Markov model)."""
 
 import numpy as np
 import pytest
 
-from futurecast.models import first_passage
 from futurecast.models.regimes import VolatilityRegimes
 
 SIGMA = np.array([0.0005, 0.0012, 0.004])
@@ -47,20 +46,6 @@ def test_fit_recovers_regimes_and_orders_them_calm_to_stormy():
     assert np.mean(model.labels(model.filter(r)) == state) > 0.9
 
     calm, stormy = np.eye(3)[[0, 2]]
-    vol = model.horizon_vol(np.vstack([calm, stormy]), 15)
-    assert vol[1] > 3 * vol[0]
     chance = model.storm_chance(np.vstack([calm, stormy]), 60)
     assert 0 < chance[0] < 0.5 and chance[1] == pytest.approx(1.0)
 
-
-def test_first_passage_odds_match_brownian_motion():
-    # Exact: P(max |B| < 1 on [0, 1]) = 4/pi * sum (-1)^k / (2k+1) * exp(-(2k+1)^2 pi^2 / 8)
-    k = np.arange(40)
-    stay = 4 / np.pi * np.sum((-1.0) ** k / (2 * k + 1) * np.exp(-((2 * k + 1) ** 2) * np.pi ** 2 / 8))
-    assert first_passage.win_probability(1.0, 1.0) == pytest.approx((1 - stay) / 2, abs=1e-3)
-    # Barriers close compared with volatility are both reached: gambler's ruin odds
-    assert first_passage.win_probability(0.01, 0.5) == pytest.approx(1 / 3)
-    assert first_passage.win_probability(0.01, 2.0) == pytest.approx(2 / 3)
-    # Further take-profits are less likely; far beyond the horizon's reach they are 0
-    odds = first_passage.win_probability(np.array([0.2, 0.5, 1.0, 2.0, 4.0, 9.0]), 1.0)
-    assert np.all(np.diff(odds) < 0) and odds[-1] == 0.0

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>FutureCast · Win Probability Watchlist</title>
+  <title>FutureCast · Setup Watchlist</title>
   <!-- Bump ?v= when the icon changes: browsers cache favicons apart from the page -->
   <link rel="icon" href="/static/favicon.svg?v=2" type="image/svg+xml">
 
@@ -65,7 +65,7 @@
       <nav class="segmented" id="timeframe-selector" aria-label="Forecast horizon">
         <span class="segmented-label"
               data-tooltip-title="Forecast horizon"
-              data-tooltip="How long a trade is held at most. 5m, 15m and 1h use 1-minute candles; 4h and 8h use 15-minute candles. Each horizon has its own trained models.">Horizon</span>
+              data-tooltip="Window for the risk column: how far price may move against a position within it. 5m, 15m and 1h use 1-minute candles; 4h and 8h use 15-minute candles. Each horizon has its own trained risk models.">Horizon</span>
         <button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')">5m</button>
         <button class="tf-btn active" data-tf="15m" onclick="setTimeframe('15m')">15m</button>
         <button class="tf-btn" data-tf="1h" onclick="setTimeframe('1h')">1h</button>
@@ -78,10 +78,10 @@
       <div class="list-head" aria-hidden="true">
         <span class="c-pair">Pair</span>
         <span class="c-price num">Price</span>
-        <span class="c-signal"><span class="th-help" data-tooltip-title="Trade signal" data-tooltip="Long or Short only when that side's calibrated win probability clears its break-even AND following such signals made money after fees on history the models never saw. Otherwise Neutral.">Signal</span></span>
-        <span class="c-long num"><span class="th-help" data-horizon-label="Long win" data-tooltip-title="Long win probability" data-tooltip="Chance a long entered now hits its take-profit before its stop-loss within the horizon. Calibrated on real past outcomes; 'needs' is the win rate required to break even after fees.">Long win · 15m</span></span>
-        <span class="c-short num"><span class="th-help" data-horizon-label="Short win" data-tooltip-title="Short win probability" data-tooltip="Chance a short entered now hits its take-profit before its stop-loss within the horizon. Calibrated on real past outcomes; 'needs' is the win rate required to break even after fees.">Short win · 15m</span></span>
-        <span class="c-models"><span class="th-help" data-tooltip-title="Model agreement" data-tooltip="One dot per model (LightGBM, XGBoost, CatBoost): green if its own odds clear break-even for a long, red for a short, grey for neither.">Models</span></span>
+        <span class="c-signal"><span class="th-help" data-tooltip-title="Trade signal" data-tooltip="Long or Short only for an A+ setup whose limit order is still waiting, whose win chance clears break-even after fees, and when setups like it made money after fees on history the models never saw. 'A+ setup' marks one without that proof.">Signal</span></span>
+        <span class="c-long num"><span class="th-help" data-tooltip-title="Long setup" data-tooltip="The latest long setup: a change of character up on the entry chart that left a fair value gap, with a limit order at the gap's midpoint. While the order waits: its win chance at the picked target and the break-even after fees. Afterwards: what happened.">Long setup</span></span>
+        <span class="c-short num"><span class="th-help" data-tooltip-title="Short setup" data-tooltip="The latest short setup: a change of character down on the entry chart that left a fair value gap, with a limit order at the gap's midpoint. While the order waits: its win chance at the picked target and the break-even after fees. Afterwards: what happened.">Short setup</span></span>
+        <span class="c-trend"><span class="th-help" data-tooltip-title="Market structure" data-tooltip="Trend on the context chart (higher) and the entry chart (lower): up after a close above the last swing high, down after a close below the last swing low.">Trend</span></span>
         <span class="c-book"><span class="th-help" data-tooltip-title="Order book" data-tooltip="Share of resting limit-order liquidity on the bid (buy) side across the top 20 levels.">Order book</span></span>
         <span class="c-risk"><span class="th-help" data-horizon-label="Risk L / S" data-tooltip-title="Long / short risk" data-tooltip="Trained models estimate the worst 5% of moves against a long (L) or short (S) within the horizon. The score (0–100) ranks that worst case against this coin's recent history; 'Max' is the highest leverage that keeps liquidation beyond it. Not a probability.">Risk L / S · 15m</span></span>
         <span class="c-actions"></span>
@@ -119,23 +119,23 @@
 
       <div class="glossary-grid">
         <div class="glossary-card">
-          <h3>Win probability</h3>
+          <h3>Structure &amp; setups</h3>
           <dl class="glossary-list">
             <div class="glossary-item">
-              <dt><span class="term-badge">Win</span> Long / short win</dt>
-              <dd>Chance that a trade entered now hits its <strong>take-profit before its stop-loss</strong> within the horizon. The models pick both levels for every candle from a few pairs scaled to recent volatility, taking the pair with the highest expected profit after fees; a timeout or touching both in one candle counts as a loss.</dd>
+              <dt><span class="term-badge">BOS</span> Break of structure</dt>
+              <dd>A candle <strong>closes</strong> beyond the latest swing high (or low) in the direction of the trend: the trend continues. A swing high is a candle whose high tops its neighbours on both sides, so it is only known a few candles later.</dd>
             </div>
             <div class="glossary-item">
-              <dt><span class="term-badge">Needs</span> Break-even</dt>
-              <dd>The win rate at which the trade makes zero after fees (0.10% round trip assumed), using how large past losses really were. Below it, the trade loses money on average.</dd>
+              <dt><span class="term-badge">CHoCH</span> Change of character</dt>
+              <dd>A close beyond the latest swing point <strong>against</strong> the trend, e.g. below the last higher low in an uptrend: the trend flips.</dd>
             </div>
             <div class="glossary-item">
-              <dt><span class="term-badge">Edge</span> Proven edge</dt>
-              <dd>The probabilities scored better than the <strong>volatility-only odds</strong> on <em>newer</em> history the models never saw, with 90% confidence, and the long / short split itself predicted outcomes. Volatility-only odds are what someone with no view on direction would quote: a hidden Markov model forecasts how volatile the coin will be, and an absorbing Markov chain turns that into the chance of touching the take-profit first. Without an edge the page shows those odds.</dd>
+              <dt><span class="term-badge">FVG</span> Fair value gap</dt>
+              <dd>Three candles where the first candle's wick and the third candle's wick do not overlap: price skipped that range in one push. It stays open until a candle closes through its far side, and price often comes back into it.</dd>
             </div>
             <div class="glossary-item">
-              <dt><span class="term-badge">bps</span> Basis points</dt>
-              <dd><strong>1 bps = 0.01%</strong>. The order book spread is quoted in basis points.</dd>
+              <dt><span class="term-badge">A+</span> Setup</dt>
+              <dd>The higher (context) chart's trend points the trade's way, the lower (entry) chart's pullback reached into a context-chart gap, then an entry-chart CHoCH left a gap behind. Each card names its two charts. Orders: a limit at that gap's midpoint, a stop just past the pullback's extreme, a take-profit at 3 or 4 times the risk (R). Setups missing a context-chart check are grade B and never raise a signal.</dd>
             </div>
           </dl>
         </div>
@@ -144,20 +144,20 @@
           <h3>Models &amp; verification</h3>
           <dl class="glossary-list">
             <div class="glossary-item">
-              <dt><span class="term-badge">Ens</span> Ensemble</dt>
-              <dd>A blend of LightGBM, XGBoost and CatBoost. Blending cancels out each model's blind spots for a steadier forecast.</dd>
+              <dt><span class="term-badge">Win</span> Win chance</dt>
+              <dd>Chance a filled setup reaches its take-profit before its stop. LightGBM, XGBoost and CatBoost learn it from the coin's past setups; unless they beat the rules on setups they never saw, the rules' own win rate for the grade is shown instead.</dd>
             </div>
             <div class="glossary-item">
-              <dt><span class="term-badge">3/3</span> Model agreement</dt>
-              <dd>How many of the three models, on their own, point the same way as the signal. Disagreement means the direction is uncertain.</dd>
+              <dt><span class="term-badge">Needs</span> Break-even</dt>
+              <dd>The win rate at which a trade makes zero after fees. The limit entry and take-profit pay the maker fee; the stop is a market order that pays the taker fee and slips past its price, so a stopped trade costs more than a winner. Rates: CoinDCX USDT-M futures with 18% GST, shown in each card's Setups heading. Tight stops make fees a large share of the risk, so they need a higher win rate.</dd>
             </div>
             <div class="glossary-item">
-              <dt><span class="term-badge">Test</span> Tested on unseen data</dt>
-              <dd>Models train on older candles, are calibrated on the next stretch, and are scored on the newest stretch they never saw. "When it said go" replays every signal on that stretch, with the take-profit / stop pair the models would have picked, one trade at a time, after fees.</dd>
+              <dt><span class="term-badge">Test</span> Tested on unseen history</dt>
+              <dd>Models train on older setups, are calibrated on the next stretch, and are scored on the newest stretch they never saw. That stretch is also replayed: every A+ setup (the rules), and the A+ setups the models liked, one at a time, after fees.</dd>
             </div>
             <div class="glossary-item">
               <dt><span class="term-badge">AUC</span> Ranking quality</dt>
-              <dd>How well the model ranks winning trades above losing ones. <strong>0.5</strong> is a coin flip, <strong>1.0</strong> is perfect; crypto edges usually sit at 0.55–0.65.</dd>
+              <dd>How well the win chances rank winning setups above losing ones. <strong>0.5</strong> is a coin flip, <strong>1.0</strong> is perfect.</dd>
             </div>
           </dl>
         </div>

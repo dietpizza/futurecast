@@ -12,7 +12,7 @@ from futurecast.features.pipeline import FeaturePipeline
 from futurecast.ingestion import binance
 from futurecast.ingestion.binance import BinancePublicClient, interval_to_ms
 from futurecast.ingestion.factory import resolve_benchmarks
-from futurecast.publisher.multi_manager import LIVE_BARS, SymbolWorker
+from futurecast.publisher.multi_manager import CANDLE_MINUTES, LIVE_BARS, SymbolWorker
 
 MINUTE, HOUR, DAY = 60_000, 3_600_000, 86_400_000
 SETTLE = 1_700_006_400_000  # a real 8h BTCUSDT funding settlement (16:00 UTC)
@@ -166,7 +166,7 @@ def test_live_refresh_feeds_settled_funding_into_model_features(clock, tmp_path)
     worker = _worker(tmp_path)
     btc = worker.benchmarks[0]
 
-    assert worker.refresh_candles(client, now=pd.Timestamp(NOW, unit="ms", tz="UTC")) == ["1m", "15m"]
+    assert worker.refresh_candles(client, now=pd.Timestamp(NOW, unit="ms", tz="UTC")) == list(CANDLE_MINUTES)
 
     for iv in ("1m", "15m"):
         assert {f"{SYMBOL}_funding_rate", f"{btc}_funding_rate"} <= set(worker.candles[iv].columns)

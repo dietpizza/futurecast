@@ -123,6 +123,8 @@ def test_api_status_air_gapped_guarantee(test_app):
 
 
 def test_api_coins_and_multi_model_predictions(test_app):
+    from futurecast.publisher.multi_manager import SETUP_SPEC
+
     with TestClient(test_app) as client:
         response = client.get("/api/coins")
         assert response.status_code == 200
@@ -147,52 +149,86 @@ def test_api_coins_and_multi_model_predictions(test_app):
             assert coin["training_status"] == "untrained"
             assert coin["model_predictions"] == {}
             assert coin["cross_verification"]["models_count"] == 0
-            assert coin["trade_probabilities"] == {}
+            # Structure and setups come from rules, so they show before training; win chances do not
+            assert coin["setup_model"] is None
+            assert coin["structure"]["htf"]["trend"] in ("up", "down", "none")
+            assert coin["structure"]["ltf"]["interval"] == SETUP_SPEC.entry_interval
+            assert coin["setups"]["signal"] == "NEUTRAL"
+            for side in ("long", "short"):
+                if coin["setups"][side]:
+                    assert coin["setups"][side]["probability"] is None
             assert "timeframe_forecasts" not in coin
 
 
-def test_trained_coin_serves_calibrated_trade_probabilities_and_risk(tmp_path):
+def test_trained_coin_serves_setups_with_win_chances_and_risk(tmp_path):
+    from futurecast.backtest import BacktestConfig, dashboard_view, run_backtest
+    from futurecast.engine.setups import setup_dataset
     from futurecast.features.pipeline import FeaturePipeline
     from futurecast.ingestion.factory import resolve_benchmarks, sanitize_symbol_for_filename
     from futurecast.ingestion.storage import align_cross_asset_data
-    from futurecast.models.trade_probability import TradeModelConfig, TradeProbabilityModel, trade_model_path
+    from futurecast.models.setup_model import SetupModel, SetupModelConfig, setup_model_path
     from futurecast.models.trade_risk import TradeRiskConfig, TradeRiskModel, risk_model_path
-    from futurecast.publisher.multi_manager import _synthetic_candles
+    from futurecast.publisher.multi_manager import SETUP_SPEC, _synthetic_candles
     import numpy as np
 
     sym = "B-DOGE_USDT"
     benches = resolve_benchmarks(sym, "coindcx", sector_aware=True)
     rng = np.random.default_rng(0)
-    target = _synthetic_candles(sym, 1, 4000, rng)
-    aligned = align_cross_asset_data(target, {b: _synthetic_candles(b, 1, 4000, rng) for b in benches}, freq="1min")
-    feats = FeaturePipeline(target_symbol=sym, primary_benchmark=benches[0], secondary_benchmark=benches[-1]).generate_features(aligned)
-    model = TradeProbabilityModel(TradeModelConfig(interval="1m", horizons={"15m": 15}, levels=((0.5, 0.5), (1.0, 0.5)),
-                                                   max_rounds=40))
-    model.fit(feats, aligned[f"{sym}_close"], aligned[f"{sym}_high"], aligned[f"{sym}_low"])
-    model.save(trade_model_path(tmp_path / "models", f"{sanitize_symbol_for_filename(sym)}_1m"))
+    aligned = {
+        minutes: align_cross_asset_data(_synthetic_candles(sym, minutes, bars, rng),
+                                        {b: _synthetic_candles(b, minutes, bars, rng) for b in benches},
+                                        freq=f"{minutes}min")
+        for minutes, bars in ((1, 6000), (SETUP_SPEC.ltf_minutes, 6000), (SETUP_SPEC.htf_minutes, 600))
+    }
+    pipe = FeaturePipeline(target_symbol=sym, primary_benchmark=benches[0], secondary_benchmark=benches[-1])
+    feats = pipe.generate_features(aligned[1])
+    entry, context = aligned[SETUP_SPEC.ltf_minutes], aligned[SETUP_SPEC.htf_minutes]
+    model = SetupModel(SetupModelConfig(spec=SETUP_SPEC, max_rounds=40))
+    setups, outcomes, X = setup_dataset(entry, context, pipe.generate_features(entry), sym, SETUP_SPEC)
+    model.fit(X, setups, outcomes)
+    model.backtests = {"3": dashboard_view(run_backtest(setups, outcomes, entry.index, SETUP_SPEC, BacktestConfig()))}
+    clean = sanitize_symbol_for_filename(sym)
+    model.save(setup_model_path(tmp_path / "models", clean))
     risk = TradeRiskModel(TradeRiskConfig(interval="1m", horizons={"15m": 15}, max_rounds=40))
-    risk.fit(feats, aligned[f"{sym}_close"], aligned[f"{sym}_high"], aligned[f"{sym}_low"])
-    risk.save(risk_model_path(tmp_path / "models", f"{sanitize_symbol_for_filename(sym)}_1m"))
+    risk.fit(feats, aligned[1][f"{sym}_close"], aligned[1][f"{sym}_high"], aligned[1][f"{sym}_low"])
+    risk.save(risk_model_path(tmp_path / "models", f"{clean}_1m"))
 
     app = create_app(initial_symbols=[sym], live_mode=False,
                      persistence_path=tmp_path / "coins.json", models_dir=tmp_path / "models")
     with TestClient(app) as client:
         coin = client.get("/api/coins").json()[0]
-        probs = coin["trade_probabilities"]
-        assert set(probs) == {"15m"}  # only horizons with a trained model, nothing scaled or invented
-        h = probs["15m"]
-        assert h["candle_interval"] == "1m" and h["horizon_bars"] == 15
-        assert h["signal"] in ("LONG", "SHORT", "NEUTRAL")
-        for side in ("long", "short"):
-            # Take-profit and stop come from the level the models picked for this side
-            assert h[side]["tp_pct"] > 0 and h[side]["sl_pct"] > 0
-            assert h[side]["level"] in ([0.5, 0.5], [1.0, 0.5]) and len(h[side]["levels"]) == 2
-            assert 0.0 <= h[side]["probability"] <= 1.0
-            assert 0.0 < h[side]["break_even"] < 1.0
-            assert h[side]["status"] in ("edge", "no_edge", "insufficient_data")
-            if h[side]["status"] != "edge":  # no direction edge: what volatility alone predicts
-                assert h[side]["probability_source"] == "volatility"
-                assert h[side]["probability"] == h[side]["baseline_probability"]
+        evidence = coin["setup_model"]
+        assert (evidence["entry_interval"], evidence["context_interval"]) == (SETUP_SPEC.entry_interval,
+                                                                            SETUP_SPEC.context_interval)
+        assert set(evidence["targets"]) == {"3", "4"}
+        bt = evidence["backtests"]["3"]
+        assert "trades" not in bt and bt["summary"]["grades"] == ["A+"] and bt["equity"][0]["equity"] == 100.0
+        assert bt["summary"]["costs"] == pytest.approx(SETUP_SPEC.costs())
+        for t in evidence["targets"].values():
+            assert t["status"] in ("edge", "no_edge", "insufficient_data")
+            assert set(t["base_rates"]) == {"A+", "B"}
+            assert "trades" in t["rules_replay"]
+
+        setups = coin["setups"]
+        assert setups["signal"] in ("LONG", "SHORT", "NEUTRAL")
+        assert (setups["entry_interval"], setups["context_interval"]) == (SETUP_SPEC.entry_interval,
+                                                                        SETUP_SPEC.context_interval)
+        # Per-leg fees for the page's notes: a stop (taker + slippage out) costs more than a win (maker out)
+        assert setups["costs"] == pytest.approx(SETUP_SPEC.costs())
+        assert setups["costs"]["lost_pct"] > setups["costs"]["timeout_pct"] > setups["costs"]["won_pct"]
+        assert coin["structure"]["htf"]["interval"] == SETUP_SPEC.context_interval
+        shown = [setups[side] for side in ("long", "short") if setups[side]]
+        assert shown, "synthetic candles should hold at least one setup"
+        for d in shown:
+            assert d["grade"] in ("A+", "B") and d["state"] in ("waiting", "in_trade", "won", "lost", "timeout",
+                                                                "expired", "cancelled")
+            up = d["side"] == "long"
+            assert (d["stop"] < d["entry"] < d["take_profit"]) if up else (d["stop"] > d["entry"] > d["take_profit"])
+            assert [t["target_r"] for t in d["targets"]] == [3.0, 4.0]
+            assert 0.0 <= d["probability"] <= 1.0 and 0.0 < d["break_even"] < 1.0
+            if d["status"] != "edge":  # no proven edge: the rules' own win rate for the grade
+                assert d["probability_source"] == "rules" and d["probability"] == d["rules_probability"]
+            assert d["max_leverage"] in (1, 2, 3, 5, 10, 20) and d["size_for_1pct_risk"] > 0
 
         risk = coin["trade_risk"]
         assert set(risk) == {"15m"}
@@ -230,7 +266,7 @@ def test_api_add_and_delete_coin(test_app):
         blur_added = blur_resp.json()
         assert blur_added["symbol"] == "B-BLUR_USDT"
         assert blur_added["model_predictions"] == {}
-        assert blur_added["trade_probabilities"] == {}
+        assert blur_added["setup_model"] is None
 
         # Check it is in active list
         get_resp = client.get("/api/coins")

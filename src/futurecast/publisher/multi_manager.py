@@ -1,4 +1,4 @@
-"""Multi-coin stream manager: real closed candles in, calibrated trade probabilities out.
+"""Multi-coin stream manager: real closed candles in, market structure, setups and risk out.
 
 Every model input comes from fully closed 1m and 15m candles of the Binance perpetual
 behind the CoinDCX pair (BinancePublicClient.fetch_candle_history). New candles are pulled
@@ -6,9 +6,11 @@ when one closes; between candles only the displayed Binance price and the order 
 Downloaded candles are kept on disk (<home>/cache/candles), so a retrain or restart only
 fetches the candles that closed since.
 
-- 1m candles: residual-alpha models, microstructure, and the 5m / 15m / 1h win-probability
-  and trade-risk horizons.
-- 15m candles: the 4h / 8h win-probability and trade-risk horizons (more history per candle).
+- Setups (SETUP_SPEC's charts): structure and fair value gaps on the context chart, structure
+  and gaps on the entry chart (engine.setups); a trained SetupModel adds win chances and a
+  backtest of the rules on the training history.
+- 1m candles: residual-alpha models, microstructure, and the 5m / 15m / 1h trade-risk horizons.
+- 15m candles: the 4h / 8h trade-risk horizons (more history per candle).
 """
 
 from __future__ import annotations
@@ -26,6 +28,9 @@ import pandas as pd
 
 from futurecast.config import AppConfig, AssetsConfig, load_config
 from futurecast.engine.forecaster import PureForecastEngine
+from futurecast.backtest import BacktestConfig, dashboard_view, run_backtest
+from futurecast.engine.setups import live_view, setup_dataset
+from futurecast.features.setups import SetupSpec, interval_minutes
 from futurecast.features.orderbook import compute_orderbook_metrics
 from futurecast.features.pipeline import FeaturePipeline
 from futurecast.ingestion.binance import BinancePublicClient
@@ -41,23 +46,24 @@ from futurecast.ingestion.storage import align_cross_asset_data
 from futurecast.labels.residual_alpha import compute_residual_alpha_target
 from futurecast.models.ensemble import MultiModelEnsemble
 from futurecast.models.regimes import VolatilityRegimes
-from futurecast.models.trade_probability import (
-    HORIZONS_BY_INTERVAL,
-    TradeModelConfig,
-    TradeProbabilityModel,
-    trade_model_path,
-)
-from futurecast.models.trade_risk import TradeRiskConfig, TradeRiskModel, risk_model_path
+from futurecast.labels.setups import target_key
+from futurecast.models.setup_model import SetupModel, SetupModelConfig, setup_model_path
+from futurecast.models.trade_risk import HORIZONS_BY_INTERVAL, TradeRiskConfig, TradeRiskModel, risk_model_path
 from futurecast.paths import resolve
 from futurecast.schema import ForecastEvent
 
 logger = logging.getLogger(__name__)
 
-CANDLE_MINUTES: Dict[str, int] = {"1m": 1, "15m": 15}
 ENGINE_INTERVAL = "1m"
+RISK_INTERVALS = ("1m", "15m")  # trade-risk models (HORIZONS_BY_INTERVAL)
+SETUP_SPEC = SetupSpec()  # setup rules: 15m entries in 1h context
+SETUP_INTERVALS = (SETUP_SPEC.entry_interval, SETUP_SPEC.context_interval)
+# Every chart a worker keeps: risk and residual alpha, plus the setup charts
+CANDLE_MINUTES: Dict[str, int] = {iv: interval_minutes(iv) for iv in dict.fromkeys(RISK_INTERVALS + SETUP_INTERVALS)}
 RESIDUAL_HORIZON_MINUTES = 15
-HISTORY_BARS: Dict[str, int] = {"1m": 100_000, "15m": 20_000}  # training: ~69 days of 1m, ~208 days of 15m
-MIN_TRAIN_BARS: Dict[str, int] = {"1m": 15_000, "15m": 3_000}  # ~10 and ~31 days
+# Training history per chart: ~69 days of 1m, ~347 of 5m, ~2 years of 15m and 1h, ~3 years of 4h
+HISTORY_BARS: Dict[str, int] = {"1m": 100_000, "5m": 100_000, "15m": 70_000, "1h": 17_520, "4h": 6_600}
+MIN_TRAIN_BARS: Dict[str, int] = {"1m": 15_000, "5m": 3_000, "15m": 3_000, "1h": 750, "4h": 200}
 # Per interval kept live: above the longest feature window (1,440 candles) and, at 1m, the clock-time
 # funding mean (3 days = 4,320 candles), so live features match the ones the models were trained on
 LIVE_BARS = 6_000
@@ -154,14 +160,15 @@ class SymbolWorker:
 
         self.ensemble = MultiModelEnsemble(config.model)
         self.ensemble.load_models(self.models_dir, self.clean_symbol, bar_interval=ENGINE_INTERVAL)
-        self.trade_models: Dict[str, Optional[TradeProbabilityModel]] = {
-            iv: TradeProbabilityModel.load(self._trade_path(iv)) for iv in CANDLE_MINUTES
-        }
+        self.setup_model: Optional[SetupModel] = SetupModel.load(self._setup_path())
+        if self.setup_model is not None and (self.setup_model.spec.entry_interval,
+                                             self.setup_model.spec.context_interval) != SETUP_INTERVALS:
+            self.setup_model = None  # trained on other charts: retrain
         self.risk_models: Dict[str, Optional[TradeRiskModel]] = {
-            iv: TradeRiskModel.load(self._risk_path(iv)) for iv in CANDLE_MINUTES
+            iv: TradeRiskModel.load(self._risk_path(iv)) for iv in RISK_INTERVALS
         }
-        # Coins trained before the risk model existed count as untrained, so they get retrained
-        self.is_custom_trained = all(self.trade_models.values()) and all(self.risk_models.values())
+        # Coins trained before the setup model existed count as untrained, so they get retrained
+        self.is_custom_trained = self.setup_model is not None and all(self.risk_models.values())
         self.training_status = "trained" if self.is_custom_trained else "untrained"
         self.training_error: Optional[str] = None
         self.training_progress: Optional[Dict[str, Any]] = None  # what training is doing right now
@@ -170,7 +177,8 @@ class SymbolWorker:
         self.engine = self._make_engine()
         self.candles: Dict[str, pd.DataFrame] = {iv: pd.DataFrame() for iv in CANDLE_MINUTES}
         self.data_source: Optional[str] = None
-        self.trade_probabilities: Dict[str, Any] = {}
+        self.structure: Dict[str, Any] = {}  # trend, breaks and fair value gaps on both setup charts (rules)
+        self.setups: Dict[str, Any] = {}  # latest setup per side and the signal
         self.trade_risk: Dict[str, Any] = {}
         self.live_price: Optional[float] = None
         self.orderbook: Dict[str, Any] = {}
@@ -179,8 +187,8 @@ class SymbolWorker:
 
     # ───────── setup ─────────
 
-    def _trade_path(self, interval: str) -> Path:
-        return trade_model_path(self.models_dir, f"{self.clean_symbol}_{interval}")
+    def _setup_path(self) -> Path:
+        return setup_model_path(self.models_dir, self.clean_symbol)
 
     def _risk_path(self, interval: str) -> Path:
         return risk_model_path(self.models_dir, f"{self.clean_symbol}_{interval}")
@@ -262,8 +270,12 @@ class SymbolWorker:
                     self.candles[iv] = pd.concat([have, new_rows]).tail(LIVE_BARS)
                     if iv == ENGINE_INTERVAL:
                         self._feed_engine(new_rows)
-                self._update_trade_models(iv)
+                if iv in RISK_INTERVALS:
+                    self._update_risk(iv)
             updated.append(iv)
+        if set(updated) & set(SETUP_INTERVALS):
+            with self._lock:
+                self._update_setups()
         return updated
 
     def load_synthetic(self, seed: int = 7) -> None:
@@ -276,8 +288,9 @@ class SymbolWorker:
                 self.candles[iv] = align_cross_asset_data(target, benches, freq=f"{minutes}min")
             self.data_source = "synthetic (offline mode)"
             self._load_engine(self.candles[ENGINE_INTERVAL])
-            for iv in CANDLE_MINUTES:
-                self._update_trade_models(iv)
+            for iv in RISK_INTERVALS:
+                self._update_risk(iv)
+            self._update_setups()
 
     # ───────── models ─────────
 
@@ -306,29 +319,39 @@ class SymbolWorker:
                     logger.debug(f"Z-score warmup failed for {self.symbol} {name}: {err}")
         self._feed_engine(candles.iloc[[-1]])
 
-    def _update_trade_models(self, interval: str) -> None:
-        """Win probabilities and trade risk for this interval's horizons from its trained models."""
-        for horizon in HORIZONS_BY_INTERVAL[interval]:
-            self.trade_probabilities.pop(horizon, None)
-            self.trade_risk.pop(horizon, None)
-        win_model, risk_model = self.trade_models.get(interval), self.risk_models.get(interval)
+    def _features(self, interval: str) -> pd.DataFrame:
+        """Model features for this interval's live candles (the engine's, when they are current)."""
         candles = self.candles[interval]
-        if (win_model is None and risk_model is None) or candles.empty:
-            return
         feats = self.engine.last_features
         if interval != ENGINE_INTERVAL or feats is None or feats.index[-1] != candles.index[-1]:
             feats = self.pipes[interval].generate_features(candles)
-        close = candles[f"{self.symbol}_close"]
-        if win_model is not None:
-            try:
-                self.trade_probabilities.update(win_model.predict_latest(feats, close))
-            except Exception as err:
-                logger.warning(f"Trade probability failed for {self.symbol} {interval}: {err}")
-        if risk_model is not None:
-            try:
-                self.trade_risk.update(risk_model.predict_latest(feats, close))
-            except Exception as err:
-                logger.warning(f"Trade risk failed for {self.symbol} {interval}: {err}")
+        return feats
+
+    def _update_risk(self, interval: str) -> None:
+        """Trade risk for this interval's horizons from its trained model."""
+        for horizon in HORIZONS_BY_INTERVAL[interval]:
+            self.trade_risk.pop(horizon, None)
+        risk_model, candles = self.risk_models.get(interval), self.candles[interval]
+        if risk_model is None or candles.empty:
+            return
+        try:
+            self.trade_risk.update(risk_model.predict_latest(self._features(interval), candles[f"{self.symbol}_close"]))
+        except Exception as err:
+            logger.warning(f"Trade risk failed for {self.symbol} {interval}: {err}")
+
+    def _update_setups(self) -> None:
+        """Structure, fair value gaps and setups from the live candles; win chances when trained."""
+        ltf, htf = (self.candles[iv] for iv in SETUP_INTERVALS)
+        if ltf.empty or htf.empty:
+            self.structure, self.setups = {}, {}
+            return
+        try:
+            feats = self._features(SETUP_INTERVALS[0]) if self.setup_model is not None else None
+            view = live_view(ltf, htf, self.symbol, feats, self.setup_model, spec=SETUP_SPEC)
+            self.structure, self.setups = view["structure"], view["setups"]
+        except Exception as err:
+            logger.warning(f"Setup detection failed for {self.symbol}: {err}")
+            self.structure, self.setups = {}, {}
 
     def refresh_orderbook(self, client: BinancePublicClient) -> None:
         raw = client.fetch_orderbook_depth(self.symbol, 20)
@@ -374,7 +397,7 @@ class SymbolWorker:
         self.training_status = "downloading"
         self.training_error = None
         client = _binance_client(self.config.assets)
-        report: Dict[str, Any] = {"data": {}, "trade": {}, "risk": {}}
+        report: Dict[str, Any] = {"data": {}, "setups": {}, "risk": {}}
         try:
             if client.resolve(self.symbol) is None:
                 raise RuntimeError(f"no trading Binance perpetual found for {self.symbol}")
@@ -394,7 +417,9 @@ class SymbolWorker:
                                       "start": str(aligned.index[0]), "end": str(aligned.index[-1])}
 
             self.training_status = "training"
-            steps = sum(2 + 4 * len(HORIZONS_BY_INTERVAL[iv]) for iv in CANDLE_MINUTES) + 1
+            setup_model = SetupModel(SetupModelConfig(spec=SETUP_SPEC))
+            steps = (sum(2 + 2 * len(HORIZONS_BY_INTERVAL[iv]) for iv in RISK_INTERVALS)
+                     + 2 + len(SETUP_SPEC.targets) + 1)
             done_steps = 0
 
             def advance(label: str) -> None:
@@ -402,24 +427,34 @@ class SymbolWorker:
                 done_steps += 1
                 self._set_progress("train", label, done_steps, steps)
 
-            trade_models: Dict[str, TradeProbabilityModel] = {}
             risk_models: Dict[str, TradeRiskModel] = {}
             history: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]] = {}
-            for iv, aligned in aligned_by_iv.items():
+            for iv in RISK_INTERVALS:
+                aligned = aligned_by_iv[iv]
                 advance(f"{iv} candle features")
                 feats = self.pipes[iv].generate_features(aligned)
                 ohlc = (aligned[f"{self.symbol}_close"], aligned[f"{self.symbol}_high"], aligned[f"{self.symbol}_low"])
                 advance(f"{iv} volatility regimes")
-                regimes = VolatilityRegimes.fit_on_history(ohlc[0])  # shared: both models fit the same one
-                model = TradeProbabilityModel(TradeModelConfig(interval=iv, horizons=dict(HORIZONS_BY_INTERVAL[iv])))
-                report["trade"][iv] = model.fit(feats, *ohlc, on_step=lambda h, side: advance(f"{h} {side} win odds"),
-                                                regimes=regimes)
+                regimes = VolatilityRegimes.fit_on_history(ohlc[0])
                 risk = TradeRiskModel(TradeRiskConfig(interval=iv, horizons=dict(HORIZONS_BY_INTERVAL[iv])))
                 report["risk"][iv] = risk.fit(feats, *ohlc, on_step=lambda h, side: advance(f"{h} {side} worst move"),
                                               regimes=regimes)
-                trade_models[iv] = model
                 risk_models[iv] = risk
                 history[iv] = (aligned, feats)
+
+            advance("market structure and setups")
+            entry, context = SETUP_INTERVALS
+            ltf_aligned, htf_aligned = aligned_by_iv[entry], aligned_by_iv[context]
+            ltf_feats = history[entry][1] if entry in history else self.pipes[entry].generate_features(ltf_aligned)
+            setups, outcomes, X = setup_dataset(ltf_aligned, htf_aligned, ltf_feats, self.symbol, SETUP_SPEC)
+            report["setups"] = setup_model.fit(X, setups, outcomes, on_step=lambda T: advance(f"{T:g}R setup odds"))
+            advance("backtest")
+            setup_model.backtests = {
+                target_key(T): dashboard_view(run_backtest(setups, outcomes, ltf_aligned.index, SETUP_SPEC,
+                                                           BacktestConfig(target=T)))
+                for T in SETUP_SPEC.targets
+            }
+            report["backtest"] = {k: v["summary"] for k, v in setup_model.backtests.items()}
 
             advance("residual alpha")
             aligned1, feats1 = history[ENGINE_INTERVAL]
@@ -433,8 +468,7 @@ class SymbolWorker:
         finally:
             client.close()
 
-        for iv, model in trade_models.items():
-            model.save(self._trade_path(iv))
+        setup_model.save(self._setup_path())
         for iv, risk in risk_models.items():
             risk.save(self._risk_path(iv))
         ensemble.save_models(self.models_dir, self.clean_symbol, meta={
@@ -445,17 +479,18 @@ class SymbolWorker:
         })
 
         with self._lock:
-            self.trade_models = dict(trade_models)
+            self.setup_model = setup_model
             self.risk_models = dict(risk_models)
             self.ensemble = ensemble
             self.engine.ensemble = ensemble
             self.engine.trainer = ensemble.models["LightGBM"]
-            for iv, (aligned, _) in history.items():
+            for iv, aligned in aligned_by_iv.items():
                 self.candles[iv] = aligned.tail(LIVE_BARS)
             self.data_source = report["data"][ENGINE_INTERVAL]["source"]
             self._load_engine(self.candles[ENGINE_INTERVAL])
-            for iv in CANDLE_MINUTES:
-                self._update_trade_models(iv)
+            for iv in RISK_INTERVALS:
+                self._update_risk(iv)
+            self._update_setups()
             self.is_custom_trained = True
             self.training_status = "trained"
             self.training_progress = None
@@ -486,7 +521,9 @@ class SymbolWorker:
                 "data_source": self.data_source,
                 "candle_time": str(candles.index[-1]) if not candles.empty else None,
                 "current_price": price,
-                "trade_probabilities": self.trade_probabilities,
+                "structure": self.structure,
+                "setups": self.setups,
+                "setup_model": self.setup_model.evidence() if self.setup_model is not None else None,
                 "trade_risk": self.trade_risk,
                 "execution_disabled": True,
             }

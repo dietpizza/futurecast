@@ -9,9 +9,7 @@ Only *filtered* probabilities are ever used: P(state at t | returns up to t). Sm
 probabilities and Viterbi paths look at later candles and would leak the future into
 features, baselines and calibration.
 
-Uses:
-- horizon_vol: expected volatility of the summed return over the next `horizon` candles,
-  mixing the states the chain may move through (the volatility-only win-odds baseline).
+Uses (all in models.trade_risk):
 - labels: the most likely state now (per-regime calibration of the worst-move bound).
 - storm_chance: chance of spending at least one candle in the stormy state within a horizon.
 
@@ -111,15 +109,6 @@ class VolatilityRegimes:
     @staticmethod
     def labels(probs: np.ndarray) -> np.ndarray:
         return np.argmax(probs, axis=1)
-
-    def horizon_vol(self, probs: np.ndarray, horizon: int) -> np.ndarray:
-        """Expected std of the summed log return over the next `horizon` candles, per row of `probs`."""
-        step = np.eye(self.n_states)
-        visits = np.zeros_like(step)  # expected candles spent in each state over the horizon
-        for _ in range(horizon):
-            step = step @ self.trans
-            visits += step
-        return np.sqrt(probs @ visits @ (self.sigma ** 2))
 
     def storm_chance(self, probs: np.ndarray, horizon: int) -> np.ndarray:
         """Chance the coin is stormy now or at any candle within the next `horizon`, per row of `probs`."""

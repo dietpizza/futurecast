@@ -6,8 +6,8 @@ candle close, before the horizon ends (see labels.barriers.adverse_excursion). T
 is measured in units of the horizon volatility known at entry, so it stays comparable
 between calm and wild regimes.
 
-History is used in time order with the same purged slices as the win probabilities
-(models.trade_probability):
+History is used strictly in time order, each slice separated from the next by one horizon
+so overlapping windows cannot leak outcomes across a boundary:
 
     | fit | early-stop |  calibrate  |    test    |
     oldest ------------------------------------> newest
@@ -24,8 +24,7 @@ Validation: the baseline is volatility alone — the 95th percentile of the norm
 excursion on everything seen before the test slice within the current regime, times current
 volatility. On the newest, unseen slice the model must beat that baseline on pinball
 (quantile) loss with 90% block-bootstrap confidence while still covering close to 95% of
-moves. Otherwise the baseline is served, like the win probabilities fall back to their
-volatility-only odds. Test coverage is also reported per regime, next to what a single
+moves. Otherwise the baseline is served. Test coverage is also reported per regime, next to what a single
 multiplier would have given.
 
 Serving: the procedure is rolled forward (refit on everything before the newest slice,
@@ -50,16 +49,16 @@ from catboost import CatBoostRegressor
 
 from futurecast.labels.barriers import BarrierSpec, adverse_excursion, horizon_volatility
 from futurecast.models.regimes import VolatilityRegimes, regime_name
-from futurecast.models.trade_probability import (
-    HORIZONS_BY_INTERVAL,
-    MODEL_NAMES,
-    SIDES,
-    _purged_slices,
-    _rolled_slices,
-)
 
 logger = logging.getLogger(__name__)
 
+# Candle interval -> {horizon label: horizon length in candles}
+HORIZONS_BY_INTERVAL: Dict[str, Dict[str, int]] = {
+    "1m": {"5m": 5, "15m": 15, "1h": 60},
+    "15m": {"4h": 16, "8h": 32},
+}
+SIDES = ("long", "short")
+MODEL_NAMES = ("LightGBM", "XGBoost", "CatBoost")
 FORMAT_VERSION = 2
 _MIN_BOUND = 1e-3  # floor on a predicted bound (volatility units) before scaling
 _SIGMA_COL = "risk_log_horizon_vol"  # the target's own scale, known at entry, given to every model
@@ -87,6 +86,29 @@ class TradeRiskConfig:
     maintenance_margin: float = 0.005  # share of position value the exchange keeps at liquidation
     leverage_ladder: Tuple[int, ...] = (1, 2, 3, 5, 10, 20)
     reference_points: int = 201  # stored quantiles of recent bounds, used to score "now vs usual"
+
+
+def _purged_slices(n: int, horizon: int, cfg: "TradeRiskConfig") -> Dict[str, slice]:
+    train_end = int(n * cfg.train_frac)
+    es_start = int(train_end * (1.0 - cfg.early_stop_frac))
+    calib_end = int(n * (cfg.train_frac + cfg.calib_frac))
+    return {
+        "fit": slice(0, max(es_start - horizon, 0)),
+        "es": slice(es_start, train_end),
+        "calib": slice(train_end + horizon, calib_end),
+        "test": slice(calib_end + horizon, n),
+    }
+
+
+def _rolled_slices(n: int, horizon: int, cfg: "TradeRiskConfig") -> Dict[str, slice]:
+    """Same spacing as validation, shifted forward: fit on everything before the newest slice."""
+    calib_end = int(n * (cfg.train_frac + cfg.calib_frac))
+    es_start = int(calib_end * (1.0 - cfg.early_stop_frac))
+    return {
+        "fit": slice(0, max(es_start - horizon, 0)),
+        "es": slice(es_start, calib_end),
+        "calib": slice(calib_end + horizon, n),
+    }
 
 
 # ───────────────────────── quantile regressors ─────────────────────────

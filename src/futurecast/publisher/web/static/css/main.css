@@ -789,19 +789,6 @@ a {
   transition: width 0.4s ease;
 }
 
-.training-tag::before {
-  content: "";
-  width: 8px;
-  height: 8px;
-  border: 1.5px solid currentColor;
-  border-right-color: transparent;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 /* Price */
 .price-val {
   font-size: 16px;
@@ -871,21 +858,20 @@ a {
 .val-flat { color: var(--text-2); }
 .val-muted { color: var(--text-dim); font-weight: 500; }
 
-/* Model agreement dots */
-.dots {
+/* Trend on the 15m and 1m charts */
+.trend-pair {
   display: inline-flex;
-  gap: 4px;
-  vertical-align: middle;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
-.dot {
-  width: 8px;
-  height: 8px;
-  background: var(--neu-fill);
+.trend-pair small {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
 }
-
-.dot-bull { background: var(--pos-fill); }
-.dot-bear { background: var(--neg-fill); }
 
 /* Order book bar */
 .book-bar {
@@ -1047,10 +1033,6 @@ a {
   background: currentColor;
 }
 
-.detail-inline h3 {
-  flex: none;
-}
-
 .h3-note {
   margin-right: auto;
   font-weight: 500;
@@ -1076,48 +1058,6 @@ a {
 .tag-pos { background: var(--pos-soft); color: var(--pos); }
 .tag-neg { background: var(--neg-soft); color: var(--neg); }
 .tag-warn { background: var(--warn-soft); color: var(--warn); }
-
-.kv {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 7px 12px;
-  font-size: 14px;
-}
-
-.kv dt {
-  color: var(--text-muted);
-}
-
-.kv dd {
-  text-align: right;
-  font-weight: 550;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-
-.detail-note {
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 13.5px;
-  color: var(--text-dim);
-  line-height: 1.5;
-}
-
-.risk-side-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.side-note {
-  margin-top: 8px;
-  font-size: 13.5px;
-  color: var(--text-dim);
-  line-height: 1.5;
-}
 
 /* Trade block: the numbers you act on, at full contrast. The side's color says whether it is a trade. */
 .trade-block {
@@ -1161,12 +1101,31 @@ a {
   color: var(--text);
 }
 
-/* Two-up while long and short sit side by side (the page is capped in width), four-up once they stack */
+/* Three-up while long and short sit side by side, all five in a row when one side trades alone */
 .trade-stats {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px 18px;
   margin-top: 14px;
+}
+
+.sides-grid.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.sides-grid.is-single .trade-stats {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+/* What else happened, under the trade: one quiet line */
+.trade-foot {
+  margin-top: 10px;
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+
+.detail-table .trade-foot {
+  padding: 0 16px 6px;
 }
 
 .trade-stat {
@@ -1194,10 +1153,6 @@ a {
 
 .trade-stat-value.is-tp { color: var(--pos); }
 .trade-stat-value.is-sl { color: var(--neg); }
-.trade-stat-value.is-lvl-low { color: var(--pos); }
-.trade-stat-value.is-lvl-moderate { color: var(--warn); }
-.trade-stat-value.is-lvl-high { color: var(--orange); }
-.trade-stat-value.is-lvl-extreme { color: var(--neg); }
 
 .trade-stat-sub {
   font-size: 13.5px;
@@ -1205,55 +1160,42 @@ a {
   color: var(--text-2);
 }
 
-.trade-record {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid var(--border);
-  font-size: 14px;
-  color: var(--text-muted);
+/* Backtest: the average trade is the number that says whether the strategy pays */
+.bt-avg {
+  font-size: 16px;
+  font-weight: 700;
 }
 
-.trade-record strong {
-  font-weight: 600;
-  color: var(--text);
+/* Equity sparkline in the backtest table: account from 100, dashed where it started */
+.spark {
+  width: 1%;
 }
 
-.trade-elsewhere {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 500;
-  color: var(--text-muted);
+.equity {
+  display: block;
+  width: 160px;
+  height: 28px;
 }
 
-.pill-link {
-  border: 0;
-  font-family: inherit;
-  cursor: pointer;
+.equity-base {
+  stroke: var(--border-strong);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  vector-effect: non-scaling-stroke;
 }
+
+.equity-line {
+  fill: none;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.equity-line.is-up { stroke: var(--pos); }
+.equity-line.is-down { stroke: var(--neg); }
 
 /* Fine print: supporting detail that doesn't change a trade */
 .detail-quiet {
   background: transparent;
-}
-
-.detail-quiet .kv {
-  font-size: 13.5px;
-}
-
-.detail-quiet .kv dd,
-.detail-quiet .inline-stats strong {
-  font-weight: 500;
-  color: var(--text-2);
-}
-
-.detail-quiet .risk-side-head {
-  font-size: 13.5px;
-  color: var(--text-2);
-}
-
-.detail-quiet .reliability summary {
-  color: var(--text-2);
 }
 
 .status-text {
@@ -1261,38 +1203,7 @@ a {
   color: var(--text-faint);
 }
 
-.status-text.is-edge {
-  color: var(--text-muted);
-}
-
-/* One-line block (order book) */
-.detail-inline {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px 20px;
-  padding-top: 10px;
-  padding-bottom: 10px;
-}
-
-.detail-inline h3 {
-  margin-bottom: 0;
-}
-
-.inline-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 20px;
-  font-size: 14px;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-
-.inline-stats strong {
-  font-weight: 550;
-}
-
-/* Horizon table */
+/* Tables */
 .data-table {
   width: 100%;
   border-collapse: collapse;
@@ -1316,14 +1227,6 @@ a {
   white-space: nowrap;
 }
 
-.data-table tbody tr {
-  cursor: pointer;
-}
-
-.data-table tbody tr:hover td {
-  background: var(--surface-hover);
-}
-
 .data-table tr:last-child td {
   border-bottom: 0;
 }
@@ -1332,95 +1235,39 @@ a {
   text-align: right;
 }
 
-.data-table tr.is-current td {
-  background: var(--accent-soft);
+/* Levels: one line per chart, label column on the left */
+.levels {
+  display: grid;
+  gap: 6px;
+  list-style: none;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
 }
 
-.data-table tr.is-current td:first-child {
-  box-shadow: inset 2px 0 0 var(--accent);
+.levels li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 14px;
 }
 
-/* Evidence and trade risk: long and short side by side */
+.lvl-chart {
+  min-width: 96px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+
+.lvl-chart small {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+/* Long and short side by side */
 .sides-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px 32px;
-}
-
-.evidence-side .kv {
-  margin-top: 10px;
-}
-
-.reliability {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  font-size: 12.5px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.reliability summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 13.5px;
-  color: var(--text);
-  cursor: pointer;
-  list-style: none;
-}
-
-.reliability summary::-webkit-details-marker {
-  display: none;
-}
-
-.reliability summary .icon {
-  color: var(--text-muted);
-  transition: transform 0.15s ease;
-}
-
-.reliability[open] summary .icon {
-  transform: rotate(180deg);
-}
-
-.rel-rows {
-  display: grid;
-  gap: 5px;
-  margin-top: 10px;
-}
-
-.rel-row {
-  display: grid;
-  grid-template-columns: 64px 1fr 64px;
-  align-items: center;
-  gap: 8px;
-}
-
-.rel-value {
-  text-align: right;
-}
-
-.rel-track {
-  position: relative;
-  height: 5px;
-  background: var(--neu-soft);
-}
-
-.rel-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: var(--accent);
-  opacity: 0.55;
-}
-
-.rel-mark {
-  position: absolute;
-  top: -3px;
-  width: 2px;
-  height: 12px;
-  margin-left: -1px;
-  background: var(--text);
 }
 
 .details-footer {
@@ -1481,10 +1328,11 @@ a {
   :root {
     --cols: minmax(110px, 1.2fr) 100px 96px 88px 88px minmax(100px, 1fr) 64px;
   }
-  .c-models { display: none; }
+  .c-trend { display: none; }
   .live-clock { display: none; }
   .sides-grid { grid-template-columns: minmax(0, 1fr); }
-  .trade-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .trade-stats,
+  .sides-grid.is-single .trade-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 720px) {
@@ -1522,13 +1370,14 @@ a {
   .row-main .c-short::before { content: "Short "; }
   .row-main .c-long::before,
   .row-main .c-short::before { font-size: 12px; color: var(--text-muted); }
-  .row-main .c-models,
+  .row-main .c-trend,
   .row-main .c-book,
   .row-main .c-risk,
   .row-main .btn-remove { display: none; }
 
   .row-details { padding: 4px 12px 16px; }
   .details-grid { grid-template-columns: minmax(0, 1fr); }
-  .trade-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trade-stats,
+  .sides-grid.is-single .trade-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .trade-stat-value { font-size: 23px; }
 }
