@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
   <title>FutureCast · Win Probability Watchlist</title>
-  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <!-- Bump ?v= when the icon changes: browsers cache favicons apart from the page -->
+  <link rel="icon" href="/static/favicon.svg?v=2" type="image/svg+xml">
 
   <script>
     // Apply the saved theme (or the OS preference) before first paint so the page never flashes.
@@ -28,9 +29,7 @@
     <div class="app-header-inner">
       <div class="header-left">
         <div class="brand">
-          <span class="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24"><path class="brand-past" d="M5 16l3.5-3.5 3 2L15.5 10" /><path class="brand-forecast" d="M15.5 10L19 6.5" /><circle cx="19" cy="6.5" r="1.6" /></svg>
-          </span>
+          <img class="brand-mark" src="/static/favicon.svg?v=2" alt="" width="28" height="28">
           <span class="brand-name">Future<span class="brand-cast">Cast</span></span>
         </div>
         <button class="icon-btn theme-toggle" id="theme-toggle" onclick="toggleTheme()"
@@ -59,6 +58,7 @@
   <main class="page">
     <div class="toolbar">
       <div class="toolbar-title">
+        <p class="eyebrow">CoinDCX futures</p>
         <h1>Watchlist</h1>
         <p class="toolbar-summary" id="watchlist-summary">Loading…</p>
       </div>

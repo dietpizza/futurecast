@@ -1,77 +1,116 @@
+/* Rajdhani (SIL OFL 1.1, fonts/Rajdhani-OFL.txt): the usual free stand-in for the Cyberpunk 2077 menu face,
+   used for all text. It has no tabular figures, so digits vary in width and number columns align only roughly. */
+@font-face {
+  font-family: "Rajdhani";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("../fonts/rajdhani-latin-500-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Rajdhani";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("../fonts/rajdhani-latin-600-normal.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Rajdhani";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("../fonts/rajdhani-latin-700-normal.woff2") format("woff2");
+}
+
+/* Cyberpunk pause-menu palette: red labels, cyan selection, off-white values, square edges.
+   Light is the same system printed on warm paper; dark is the in-game menu. */
 :root {
-  --bg: #f5f6f8;
-  --surface: #ffffff;
-  --surface-muted: #f9fafb;
-  --surface-hover: #f8fafc;
-  --border: #e5e7eb;
-  --border-strong: #d1d5db;
+  --bg: #f3ecea;
+  --surface: #fbf7f6;
+  --surface-muted: #f6efed;
+  --surface-hover: #f2e7e4;
+  --border: #e4d3cf;
+  --border-strong: #cfb6b1;
 
-  --text: #111827;
-  --text-2: #374151;
-  --text-muted: #6b7280;
-  --text-faint: #9ca3af;
+  --text: #1a0d10;
+  --text-2: #3e2a2e;
+  --text-muted: #b03f39;
+  --text-faint: #c39894;
+  /* Dim but neutral: numbers without an edge and long-form notes, so neither reads as red */
+  --text-dim: #7a686b;
 
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-soft: #eff6ff;
-  --accent-text: #2563eb;
+  --accent: #00848d;
+  --accent-hover: #006d75;
+  --accent-soft: rgba(0, 132, 141, 0.09);
+  --accent-text: #00747c;
+  --on-accent: #ffffff;
 
-  --pos: #047857;
-  --pos-soft: #ecfdf5;
-  --pos-fill: #10b981;
-  --neg: #be123c;
-  --neg-soft: #fff1f2;
-  --neg-fill: #f43f5e;
-  --neu: #4b5563;
-  --neu-soft: #f3f4f6;
-  --neu-fill: #cbd5e1;
-  --warn: #b45309;
-  --warn-soft: #fffbeb;
+  --pos: #077a55;
+  --pos-soft: #e1f3ea;
+  --pos-fill: #12a374;
+  --neg: #c81e3c;
+  --neg-soft: #fbe4e8;
+  --neg-fill: #e3364f;
+  --neu: #5b4a4d;
+  --neu-soft: #eee3e0;
+  --neu-fill: #cdbab6;
+  --warn: #946f00;
+  --warn-soft: #f8efcc;
   --orange: #c2410c;
-  --orange-soft: #fff7ed;
+  --orange-soft: #fbeadf;
 
-  /* Risk badges: deeper tints plus a matching outline so they stand out on white */
-  --risk-low-bg: #d1fae5;
-  --risk-low-edge: #a7f3d0;
-  --risk-moderate-bg: #fef3c7;
-  --risk-moderate-edge: #fde68a;
-  --risk-high-bg: #ffedd5;
-  --risk-high-edge: #fed7aa;
-  --risk-extreme-bg: #ffe4e6;
-  --risk-extreme-edge: #fecdd3;
+  /* Risk badges: deeper tints plus a matching outline so they stand out on paper */
+  --risk-low-bg: #d5efe2;
+  --risk-low-edge: #a8dcc4;
+  --risk-moderate-bg: #f6e9b8;
+  --risk-moderate-edge: #e6d07a;
+  --risk-high-bg: #f9dfcd;
+  --risk-high-edge: #efbb98;
+  --risk-extreme-bg: #f8d5db;
+  --risk-extreme-edge: #eda5b1;
 
   --surface-raised: #ffffff;
-  --well: #f8fafc;
-  --inverse-bg: #111827;
-  --inverse-text: #ffffff;
-  /* Order book bar: bid and ask matched in contrast (~3.7:1 on white) */
-  --book-bid: #059669;
-  --book-ask: #f43f5e;
-  --flash-pos: #d1fae5;
-  --flash-neg: #ffe4e6;
-  --header-bg: rgba(255, 255, 255, 0.92);
-  --backdrop: rgba(17, 24, 39, 0.28);
-  --focus-ring: rgba(37, 99, 235, 0.15);
-  --brand-from: #2563eb;
-  --brand-to: #7c3aed;
+  --well: #f6efed;
+  /* Selected tab / segment: filled with the accent, like the "ON" switch */
+  --inverse-bg: var(--accent);
+  --inverse-text: var(--on-accent);
+  /* Order book bar: bid and ask matched in contrast */
+  --book-bid: #12a374;
+  --book-ask: #e3364f;
+  --flash-pos: #d5efe2;
+  --flash-neg: #f8d5db;
+  --header-bg: rgba(243, 236, 234, 0.92);
+  --backdrop: rgba(26, 13, 16, 0.3);
+  --focus-ring: rgba(0, 132, 141, 0.18);
+
+  /* Cyan hairline for frames that should read as "selected" (open card, trade block, tooltip) */
+  --rule: rgba(0, 132, 141, 0.38);
+  --glow: transparent;
+  /* Page texture: faint red scanlines, the page column's frame lines, a warm vignette */
+  --scanline: rgba(176, 63, 57, 0.035);
+  --frame: var(--border);
+  --vignette: rgba(176, 63, 57, 0.06);
 
   /* Open watchlist card: accent-tinted versions of the tokens above (follow the theme) */
-  --open-bg: color-mix(in srgb, var(--accent) 5%, var(--surface));
-  --open-hover: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  --open-well: color-mix(in srgb, var(--accent) 5%, var(--well));
-  --open-border: color-mix(in srgb, var(--accent) 35%, var(--border));
+  --open-bg: color-mix(in srgb, var(--accent) 3%, var(--surface));
+  --open-hover: color-mix(in srgb, var(--accent) 6%, var(--surface));
+  --open-well: color-mix(in srgb, var(--accent) 3%, var(--well));
+  --open-border: var(--rule);
 
-  --radius: 10px;
-  --radius-sm: 6px;
-  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05);
-  --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.08);
-  --shadow-lg: 0 8px 24px rgba(16, 24, 40, 0.12), 0 1px 3px rgba(16, 24, 40, 0.08);
-  --shadow-drawer: -12px 0 32px rgba(16, 24, 40, 0.12);
+  --radius: 0;
+  --radius-sm: 0;
+  /* Cut corners on filled controls (top-left and bottom-right), as on the menu's switches */
+  --notch: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+  --shadow-sm: none;
+  --shadow-md: 0 6px 18px rgba(26, 13, 16, 0.08);
+  --shadow-lg: 0 10px 28px rgba(26, 13, 16, 0.14), 0 1px 3px rgba(26, 13, 16, 0.08);
+  --shadow-drawer: -12px 0 32px rgba(26, 13, 16, 0.14);
   --header-h: 56px;
   --page-w: 1280px;
 
-  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font: "Rajdhani", "Avenir Next Condensed", "Arial Narrow", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
   --cols: minmax(140px, 1.2fr) 112px 104px 100px 100px 92px minmax(120px, 1fr) minmax(112px, 1fr) 68px;
 
@@ -82,64 +121,66 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #0e1014;
-  --surface: #16191f;
-  --surface-muted: #1b1f26;
-  --surface-hover: #1c2028;
-  --surface-raised: #1f232b;
-  --well: #121418;
-  --border: #272c35;
-  --border-strong: #363c47;
+  --bg: #0b0608;
+  --surface: #110a0c;
+  --surface-muted: #160c10;
+  --surface-hover: #1b0e13;
+  --surface-raised: #1a0e12;
+  --well: #0d0709;
+  --border: #2f171c;
+  --border-strong: #4d2329;
 
-  --text: #e7e9ed;
-  --text-2: #c3c8d1;
-  --text-muted: #8b93a1;
-  --text-faint: #5d6471;
+  --text: #e4f3f2;
+  --text-2: #b3cecc;
+  --text-muted: #dc5f57;
+  --text-faint: #93454a;
+  --text-dim: #7f9998;
 
-  --accent: #2563eb;
-  --accent-hover: #3b82f6;
-  --accent-soft: rgba(59, 130, 246, 0.16);
-  --accent-text: #6ea8fe;
+  --accent: #5ef6ff;
+  --accent-hover: #9cfaff;
+  --accent-soft: rgba(94, 246, 255, 0.09);
+  --accent-text: #5ef6ff;
+  --on-accent: #0b0608;
 
-  --pos: #34d399;
-  --pos-soft: rgba(16, 185, 129, 0.15);
-  --pos-fill: #10b981;
-  --neg: #fb7185;
-  --neg-soft: rgba(244, 63, 94, 0.15);
-  --neg-fill: #f43f5e;
-  --neu: #a3abb8;
-  --neu-soft: #242933;
-  --neu-fill: #4a5261;
-  --warn: #fbbf24;
-  --warn-soft: rgba(245, 158, 11, 0.15);
-  --orange: #fb923c;
-  --orange-soft: rgba(249, 115, 22, 0.15);
+  --pos: #3df5a7;
+  --pos-soft: rgba(61, 245, 167, 0.1);
+  --pos-fill: #1fd68b;
+  --neg: #ff4a66;
+  --neg-soft: rgba(255, 74, 102, 0.12);
+  --neg-fill: #e8364f;
+  --neu: #a3b6b5;
+  --neu-soft: rgba(228, 243, 242, 0.06);
+  --neu-fill: #4a3438;
+  --warn: #f2e04a;
+  --warn-soft: rgba(242, 224, 74, 0.1);
+  --orange: #ff8c42;
+  --orange-soft: rgba(255, 140, 66, 0.12);
 
   --risk-low-bg: var(--pos-soft);
-  --risk-low-edge: transparent;
+  --risk-low-edge: rgba(61, 245, 167, 0.3);
   --risk-moderate-bg: var(--warn-soft);
-  --risk-moderate-edge: transparent;
+  --risk-moderate-edge: rgba(242, 224, 74, 0.3);
   --risk-high-bg: var(--orange-soft);
-  --risk-high-edge: transparent;
+  --risk-high-edge: rgba(255, 140, 66, 0.3);
   --risk-extreme-bg: var(--neg-soft);
-  --risk-extreme-edge: transparent;
+  --risk-extreme-edge: rgba(255, 74, 102, 0.35);
 
-  --inverse-bg: #e7e9ed;
-  --inverse-text: #0e1014;
-  --book-bid: #0d9f6e;
-  --book-ask: #ef4f6b;
-  --flash-pos: rgba(16, 185, 129, 0.28);
-  --flash-neg: rgba(244, 63, 94, 0.28);
-  --header-bg: rgba(22, 25, 31, 0.88);
-  --backdrop: rgba(0, 0, 0, 0.55);
-  --focus-ring: rgba(96, 165, 250, 0.25);
-  --brand-from: #60a5fa;
-  --brand-to: #a78bfa;
+  --book-bid: #1fd68b;
+  --book-ask: #e8364f;
+  --flash-pos: rgba(61, 245, 167, 0.24);
+  --flash-neg: rgba(255, 74, 102, 0.26);
+  --header-bg: rgba(11, 6, 8, 0.88);
+  --backdrop: rgba(4, 1, 2, 0.7);
+  --focus-ring: rgba(94, 246, 255, 0.22);
 
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
-  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.3);
-  --shadow-drawer: -12px 0 32px rgba(0, 0, 0, 0.45);
+  --rule: rgba(94, 246, 255, 0.3);
+  --glow: rgba(94, 246, 255, 0.35);
+  --scanline: rgba(255, 74, 102, 0.028);
+  --vignette: rgba(140, 22, 38, 0.22);
+
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 10px 28px rgba(0, 0, 0, 0.6), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-drawer: -12px 0 32px rgba(0, 0, 0, 0.6);
 }
 
 *,
@@ -154,11 +195,20 @@ html {
   -webkit-text-size-adjust: 100%;
 }
 
+html {
+  scrollbar-color: var(--border-strong) transparent;
+}
+
 body {
-  background: var(--bg);
+  background-color: var(--bg);
+  /* Faint scanlines over a red vignette, like the pause menu's backdrop */
+  background-image:
+    repeating-linear-gradient(0deg, var(--scanline) 0 1px, transparent 1px 3px),
+    radial-gradient(ellipse at 50% 0%, var(--vignette), transparent 70%);
+  background-attachment: fixed;
   color: var(--text);
   font-family: var(--font);
-  font-size: 14px;
+  font-size: 15px;
   line-height: 1.45;
   min-height: 100vh;
   min-height: 100dvh;
@@ -166,6 +216,26 @@ body {
   display: flex;
   flex-direction: column;
   -webkit-font-smoothing: antialiased;
+}
+
+/* The page column's frame: two hairlines running the full height either side of the content */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  --edge: calc(50% - var(--page-w) / 2);
+  background: linear-gradient(90deg,
+    transparent calc(var(--edge) - 1px), var(--frame) calc(var(--edge) - 1px),
+    var(--frame) var(--edge), transparent var(--edge),
+    transparent calc(100% - var(--edge)), var(--frame) calc(100% - var(--edge)),
+    var(--frame) calc(100% - var(--edge) + 1px), transparent calc(100% - var(--edge) + 1px));
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 button {
@@ -189,14 +259,28 @@ a {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.75;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  stroke-linecap: square;
+  stroke-linejoin: miter;
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 1px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
+}
+
+/* Small caps labels: column heads, section labels, buttons, tabs */
+.list-head,
+.detail-block h3,
+.trade-stat-label,
+.data-table th,
+.segmented-label,
+.tag,
+.pill,
+.btn,
+.tf-btn,
+.ws-status {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 /* ───────── Buttons ───────── */
@@ -204,40 +288,44 @@ a {
 .btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   height: 34px;
-  padding: 0 12px;
+  padding: 0 14px;
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong);
-  background: var(--surface);
+  background: transparent;
   color: var(--text-2);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .btn:hover {
-  background: var(--surface-muted);
-  border-color: var(--text-faint);
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-text);
 }
 
 .btn-primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
+  font-weight: 600;
+  clip-path: var(--notch);
 }
 
 .btn-primary:hover {
   background: var(--accent-hover);
   border-color: var(--accent-hover);
+  color: var(--on-accent);
 }
 
 .btn-sm {
   height: 28px;
   padding: 0 10px;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .btn-ghost-danger {
@@ -253,13 +341,12 @@ a {
 }
 
 .hotkey-hint {
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1;
   padding: 2px 5px;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.18);
-  border: 1px solid rgba(255, 255, 255, 0.28);
+  background: transparent;
+  border: 1px solid currentColor;
+  opacity: 0.75;
 }
 
 .icon-btn {
@@ -272,12 +359,13 @@ a {
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .icon-btn:hover {
-  background: var(--neu-soft);
-  color: var(--text);
+  background: var(--accent-soft);
+  border-color: var(--rule);
+  color: var(--accent-text);
 }
 
 .text-link {
@@ -347,49 +435,23 @@ a {
   gap: 10px;
 }
 
+/* Same file as the favicon: solid line = the past, dashed line = the forecast, dot = where it lands */
 .brand-mark {
-  display: grid;
-  place-items: center;
+  display: block;
   width: 28px;
   height: 28px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 45%, #7c3aed 100%);
-  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.25);
-}
-
-/* Solid line = the past, dashed line = the forecast, dot = where it lands */
-.brand-mark svg {
-  width: 20px;
-  height: 20px;
-  fill: none;
-  stroke: #fff;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-}
-
-.brand-mark .brand-forecast {
-  stroke-dasharray: 1.5 2.5;
-  opacity: 0.85;
-}
-
-.brand-mark circle {
-  fill: #fff;
-  stroke: none;
 }
 
 .brand-name {
-  font-size: 18px;
+  font-size: 22px;
   font-weight: 700;
-  letter-spacing: -0.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   line-height: 1;
 }
 
 .brand-cast {
-  background: linear-gradient(90deg, var(--brand-from), var(--brand-to));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: var(--accent-text);
 }
 
 .header-actions {
@@ -401,26 +463,29 @@ a {
 .ws-status {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12.5px;
-  font-weight: 500;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text-muted);
 }
 
 .status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  width: 7px;
+  height: 7px;
   background: var(--text-faint);
+}
+
+.ws-status[data-state="live"] {
+  color: var(--pos);
 }
 
 .ws-status[data-state="live"] .status-dot {
   background: var(--pos-fill);
-  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.18);
+  box-shadow: 0 0 8px var(--pos-fill);
 }
 
 .ws-status[data-state="reconnecting"] .status-dot {
-  background: #f59e0b;
+  background: var(--warn);
   animation: blink 1s ease-in-out infinite;
 }
 
@@ -428,9 +493,14 @@ a {
   50% { opacity: 0.3; }
 }
 
+/* Rajdhani's digits vary in width: a fixed minimum keeps the ticking clock from nudging its neighbours */
 .live-clock {
-  font-size: 12.5px;
-  color: var(--text-muted);
+  display: inline-block;
+  min-width: 6em;
+  text-align: right;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
   font-variant-numeric: tabular-nums;
 }
 
@@ -449,20 +519,44 @@ a {
   align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
   flex-wrap: wrap;
 }
 
+/* Mono caps label with a square bullet, set above a heading: "■ COINDCX FUTURES" */
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.eyebrow::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  background: var(--accent);
+}
+
 .toolbar-title h1 {
-  font-size: 20px;
-  font-weight: 650;
-  letter-spacing: -0.3px;
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
 }
 
 .toolbar-summary {
-  margin-top: 2px;
-  font-size: 13px;
+  margin-top: 8px;
+  font-size: 14px;
   color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.02em;
 }
 
 .toolbar-summary .sum-pos { color: var(--pos); font-weight: 600; }
@@ -475,39 +569,40 @@ a {
   padding: 3px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow-sm);
 }
 
 .segmented-label {
-  padding: 0 8px 0 6px;
-  font-size: 12px;
-  font-weight: 500;
+  padding: 0 10px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text-muted);
 }
 
 .tf-btn {
-  min-width: 40px;
+  min-width: 42px;
   height: 28px;
   padding: 0 10px;
   border: 0;
-  border-radius: 6px;
   background: transparent;
   color: var(--text-2);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 15px;
+  font-weight: 600;
+  text-transform: none;
   font-variant-numeric: tabular-nums;
   cursor: pointer;
   transition: background 0.15s, color 0.15s;
 }
 
 .tf-btn:hover {
-  background: var(--neu-soft);
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }
 
 .tf-btn.active {
   background: var(--inverse-bg);
   color: var(--inverse-text);
+  font-weight: 700;
+  clip-path: var(--notch);
 }
 
 /* ───────── Watchlist ───────── */
@@ -532,10 +627,8 @@ a {
   background: var(--surface-muted);
   border: 1px solid var(--border);
   border-radius: var(--radius) var(--radius) 0 0;
-  font-size: 11.5px;
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -543,15 +636,16 @@ a {
 .th-help {
   cursor: help;
   text-decoration: underline dotted var(--text-faint);
-  text-underline-offset: 3px;
+  text-underline-offset: 4px;
 }
 
 .coin-row {
+  position: relative;
   background: var(--surface);
   border: 1px solid var(--border);
   border-top: 0;
   box-shadow: var(--shadow-sm);
-  overflow: clip; /* row and detail backgrounds follow the rounded corners */
+  overflow: clip;
   transition: margin 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -566,6 +660,32 @@ a {
   border: 1px solid var(--open-border);
   border-radius: var(--radius);
   box-shadow: var(--shadow-md);
+}
+
+/* HUD corner brackets on the open card */
+.coin-row.is-open::before,
+.coin-row.is-open::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+  border: 0 solid var(--accent);
+}
+
+.coin-row.is-open::before {
+  top: 0;
+  left: 0;
+  border-top-width: 2px;
+  border-left-width: 2px;
+}
+
+.coin-row.is-open::after {
+  right: 0;
+  bottom: 0;
+  border-right-width: 2px;
+  border-bottom-width: 2px;
 }
 
 .coin-row.is-open:last-child {
@@ -597,7 +717,8 @@ a {
 }
 
 .row-main:hover {
-  background: var(--surface-hover);
+  background: linear-gradient(90deg, var(--accent-soft), transparent 55%), var(--surface-hover);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .coin-row.is-open .row-main {
@@ -605,12 +726,12 @@ a {
 }
 
 .coin-row.is-open .row-main:hover {
-  background: var(--open-hover);
+  background: linear-gradient(90deg, var(--accent-soft), transparent 55%), var(--open-hover);
 }
 
 .cell-sub {
   margin-top: 2px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-muted);
   white-space: nowrap;
 }
@@ -628,10 +749,10 @@ a {
 }
 
 .pair-base {
-  font-size: 15px;
-  font-weight: 650;
+  font-size: 19px;
+  font-weight: 700;
   text-decoration: none;
-  letter-spacing: -0.1px;
+  letter-spacing: 0.04em;
 }
 
 .pair-base:hover {
@@ -641,9 +762,9 @@ a {
 }
 
 .pair-quote {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-faint);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .training-tag {
@@ -657,7 +778,6 @@ a {
   display: inline-block;
   width: 120px;
   height: 4px;
-  border-radius: 2px;
   background: var(--border);
   overflow: hidden;
 }
@@ -671,9 +791,8 @@ a {
 
 .training-tag::before {
   content: "";
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
+  width: 8px;
+  height: 8px;
   border: 1.5px solid currentColor;
   border-right-color: transparent;
   animation: spin 0.8s linear infinite;
@@ -685,11 +804,10 @@ a {
 
 /* Price */
 .price-val {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 550;
   padding: 2px 4px;
   margin-right: -4px;
-  border-radius: 4px;
 }
 
 .flash-green { animation: flash-green 0.9s ease-out; }
@@ -709,12 +827,12 @@ a {
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   height: 24px;
   padding: 0 9px;
-  border-radius: 999px;
-  font-size: 12.5px;
-  font-weight: 600;
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
+  font-size: 13px;
+  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -722,7 +840,6 @@ a {
   content: "";
   width: 6px;
   height: 6px;
-  border-radius: 50%;
   background: currentColor;
 }
 
@@ -734,17 +851,17 @@ a {
 .pill-sm {
   height: 20px;
   padding: 0 7px;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 /* Numbers */
 .val-lg {
-  font-size: 16px;
-  letter-spacing: -0.2px;
+  font-size: 19px;
+  letter-spacing: -0.01em;
 }
 
 .val {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -752,7 +869,7 @@ a {
 .val-pos { color: var(--pos); }
 .val-neg { color: var(--neg); }
 .val-flat { color: var(--text-2); }
-.val-muted { color: var(--text-muted); font-weight: 500; }
+.val-muted { color: var(--text-dim); font-weight: 500; }
 
 /* Model agreement dots */
 .dots {
@@ -762,9 +879,8 @@ a {
 }
 
 .dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
+  width: 8px;
+  height: 8px;
   background: var(--neu-fill);
 }
 
@@ -775,9 +891,8 @@ a {
 .book-bar {
   display: flex;
   gap: 2px;
-  height: 6px;
+  height: 5px;
   max-width: 120px;
-  border-radius: 999px;
   overflow: hidden;
 }
 
@@ -807,15 +922,14 @@ a {
   gap: 3px;
   min-width: 42px;
   padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 12.5px;
+  font-size: 14px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 
 .risk-num small {
-  font-size: 10.5px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 700;
   opacity: 0.7;
 }
 
@@ -862,7 +976,7 @@ a {
 .row-details {
   padding: 4px 20px 20px;
   background: var(--well);
-  border-top: 1px dashed var(--border);
+  border-top: 1px solid var(--border);
 }
 
 .row-details[hidden] {
@@ -884,7 +998,6 @@ a {
 .detail-block {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
   padding: 14px 16px;
   min-width: 0;
 }
@@ -898,26 +1011,44 @@ a {
   overflow-x: auto;
 }
 
-.detail-table h3 {
-  padding: 8px 16px 4px;
+/* Doubled class so these beat the .detail-block h3 rules below */
+.detail-block.detail-table h3 {
+  padding: 8px 16px 4px 30px;
 }
 
+.detail-block.detail-table h3::before {
+  left: 16px;
+  top: calc(8px + 0.725em);
+}
+
+/* Section label with a square bullet: "■ EVIDENCE" */
 .detail-block h3 {
+  position: relative;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: 8px;
+  gap: 4px 8px;
   margin-bottom: 10px;
-  font-size: 12px;
+  padding-left: 14px;
+  font-size: 12.5px;
   font-weight: 600;
-  letter-spacing: 0.3px;
-  text-transform: uppercase;
   color: var(--text-muted);
 }
 
-.detail-block h3 .tag {
-  text-transform: none;
-  letter-spacing: 0;
+.detail-block h3::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.725em; /* middle of the first line, so it stays put when the heading wraps */
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  background: currentColor;
+}
+
+.detail-inline h3 {
+  flex: none;
 }
 
 .h3-note {
@@ -926,6 +1057,7 @@ a {
   text-transform: none;
   letter-spacing: 0;
   color: var(--text-faint);
+  font-size: 13px;
 }
 
 .tag {
@@ -933,9 +1065,9 @@ a {
   align-items: center;
   height: 20px;
   padding: 0 7px;
-  border-radius: 4px;
-  font-size: 11.5px;
-  font-weight: 600;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+  font-size: 12px;
+  font-weight: 700;
   background: var(--neu-soft);
   color: var(--neu);
   white-space: nowrap;
@@ -949,7 +1081,7 @@ a {
   display: grid;
   grid-template-columns: auto 1fr;
   gap: 7px 12px;
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .kv dt {
@@ -967,8 +1099,8 @@ a {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
-  font-size: 12.5px;
-  color: var(--text-muted);
+  font-size: 13.5px;
+  color: var(--text-dim);
   line-height: 1.5;
 }
 
@@ -976,21 +1108,21 @@ a {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
 }
 
 .side-note {
   margin-top: 8px;
-  font-size: 12.5px;
-  color: var(--text-muted);
+  font-size: 13.5px;
+  color: var(--text-dim);
   line-height: 1.5;
 }
 
 /* Trade block: the numbers you act on, at full contrast. The side's color says whether it is a trade. */
 .trade-block {
-  border-color: var(--border-strong);
-  box-shadow: inset 0 3px 0 var(--accent);
+  border-color: var(--rule);
+  box-shadow: inset 0 2px 0 var(--accent);
 }
 
 .trade-block h3 {
@@ -1002,27 +1134,28 @@ a {
   min-width: 0;
   padding: 14px 16px;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
   background: var(--surface-raised);
 }
 
-.trade-side.is-go-long { border-color: var(--pos-fill); background: var(--pos-soft); box-shadow: inset 4px 0 0 var(--pos-fill); }
-.trade-side.is-go-short { border-color: var(--neg-fill); background: var(--neg-soft); box-shadow: inset 4px 0 0 var(--neg-fill); }
-.trade-side.is-unproven { border-color: var(--warn); box-shadow: inset 4px 0 0 var(--warn); }
+.trade-side.is-go-long { border-color: var(--pos-fill); background: var(--pos-soft); box-shadow: inset 3px 0 0 var(--pos-fill); }
+.trade-side.is-go-short { border-color: var(--neg-fill); background: var(--neg-soft); box-shadow: inset 3px 0 0 var(--neg-fill); }
+.trade-side.is-unproven { border-color: var(--warn); box-shadow: inset 3px 0 0 var(--warn); }
 
 .trade-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 16px;
+  font-size: 20px;
   font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text);
 }
 
 .trade-why {
   margin-top: 6px;
-  font-size: 13.5px;
+  font-size: 15px;
   font-weight: 500;
   line-height: 1.45;
   color: var(--text);
@@ -1045,17 +1178,15 @@ a {
 }
 
 .trade-stat-label {
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.4px;
-  text-transform: uppercase;
   color: var(--text-muted);
 }
 
 .trade-stat-value {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: -0.3px;
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   color: var(--text);
@@ -1069,7 +1200,7 @@ a {
 .trade-stat-value.is-lvl-extreme { color: var(--neg); }
 
 .trade-stat-sub {
-  font-size: 12.5px;
+  font-size: 13.5px;
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
 }
@@ -1077,8 +1208,8 @@ a {
 .trade-record {
   margin-top: 14px;
   padding-top: 12px;
-  border-top: 1px solid var(--border-strong);
-  font-size: 13px;
+  border-top: 1px solid var(--border);
+  font-size: 14px;
   color: var(--text-muted);
 }
 
@@ -1092,8 +1223,6 @@ a {
   align-items: center;
   gap: 6px;
   font-weight: 500;
-  text-transform: none;
-  letter-spacing: 0;
   color: var(--text-muted);
 }
 
@@ -1109,7 +1238,7 @@ a {
 }
 
 .detail-quiet .kv {
-  font-size: 12.5px;
+  font-size: 13.5px;
 }
 
 .detail-quiet .kv dd,
@@ -1119,7 +1248,7 @@ a {
 }
 
 .detail-quiet .risk-side-head {
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--text-2);
 }
 
@@ -1128,7 +1257,7 @@ a {
 }
 
 .status-text {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-faint);
 }
 
@@ -1154,7 +1283,7 @@ a {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 20px;
-  font-size: 13px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
   color: var(--text);
 }
@@ -1167,13 +1296,13 @@ a {
 .data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 
 .data-table th {
   padding: 8px 16px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-muted);
   text-align: left;
@@ -1208,7 +1337,7 @@ a {
 }
 
 .data-table tr.is-current td:first-child {
-  box-shadow: inset 3px 0 0 var(--accent);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 /* Evidence and trade risk: long and short side by side */
@@ -1226,7 +1355,7 @@ a {
   margin-top: 12px;
   padding-top: 10px;
   border-top: 1px solid var(--border);
-  font-size: 11.5px;
+  font-size: 12.5px;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
@@ -1236,7 +1365,7 @@ a {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--text);
   cursor: pointer;
   list-style: none;
@@ -1274,15 +1403,13 @@ a {
 
 .rel-track {
   position: relative;
-  height: 6px;
-  border-radius: 999px;
+  height: 5px;
   background: var(--neu-soft);
 }
 
 .rel-fill {
   position: absolute;
   inset: 0 auto 0 0;
-  border-radius: inherit;
   background: var(--accent);
   opacity: 0.55;
 }
@@ -1302,7 +1429,7 @@ a {
   flex-wrap: wrap;
   gap: 8px 20px;
   margin-top: 14px;
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--text-muted);
 }
 
@@ -1323,15 +1450,17 @@ a {
 }
 
 .empty-state h3 {
-  font-size: 15px;
+  font-size: 24px;
   font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .empty-state p {
   margin: 6px auto 18px;
   max-width: 360px;
-  color: var(--text-muted);
-  font-size: 13.5px;
+  color: var(--text-dim);
+  font-size: 14.5px;
 }
 
 .empty-state .btn {
@@ -1392,7 +1521,7 @@ a {
   .row-main .c-long::before { content: "Long "; }
   .row-main .c-short::before { content: "Short "; }
   .row-main .c-long::before,
-  .row-main .c-short::before { font-size: 11px; color: var(--text-muted); }
+  .row-main .c-short::before { font-size: 12px; color: var(--text-muted); }
   .row-main .c-models,
   .row-main .c-book,
   .row-main .c-risk,
@@ -1401,5 +1530,5 @@ a {
   .row-details { padding: 4px 12px 16px; }
   .details-grid { grid-template-columns: minmax(0, 1fr); }
   .trade-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .trade-stat-value { font-size: 19px; }
+  .trade-stat-value { font-size: 23px; }
 }

@@ -52,13 +52,18 @@
 }
 
 .sidebar-title {
-  font-size: 16px;
-  font-weight: 650;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 .sidebar-count {
   font-size: 12.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-muted);
+  font-weight: 600;
 }
 
 .sidebar-search-box {
@@ -83,11 +88,10 @@
   height: 38px;
   padding: 0 36px 0 34px;
   border: 1px solid var(--border-strong);
-  border-radius: 8px;
-  background: var(--surface);
+  background: var(--well);
   color: var(--text);
   font: inherit;
-  font-size: 13.5px;
+  font-size: 14.5px;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 
@@ -111,7 +115,6 @@
   width: 26px;
   height: 26px;
   border: 0;
-  border-radius: 5px;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
@@ -140,24 +143,27 @@
   height: 28px;
   padding: 0 11px;
   border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--surface);
-  color: var(--text-2);
-  font-size: 12.5px;
-  font-weight: 500;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .sidebar-tab-btn:hover {
-  border-color: var(--border-strong);
-  background: var(--surface-muted);
+  border-color: var(--rule);
+  background: var(--accent-soft);
+  color: var(--accent-text);
 }
 
 .sidebar-tab-btn.active {
   background: var(--inverse-bg);
   border-color: var(--inverse-bg);
   color: var(--inverse-text);
+  font-weight: 700;
 }
 
 .sidebar-coin-list {
@@ -175,7 +181,8 @@
 }
 
 .sidebar-coin:hover {
-  background: var(--surface-hover);
+  background: linear-gradient(90deg, var(--accent-soft), transparent 60%), var(--surface-hover);
+  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .sidebar-coin-main {
@@ -191,12 +198,13 @@
 }
 
 .sidebar-symbol {
-  font-size: 14px;
-  font-weight: 650;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
 }
 
 .sidebar-name {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-2);
   white-space: nowrap;
   overflow: hidden;
@@ -206,14 +214,17 @@
 .sidebar-sector {
   margin-left: auto;
   flex: none;
-  font-size: 11.5px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-muted);
+  font-weight: 600;
 }
 
 .sidebar-desc {
   margin-top: 2px;
-  font-size: 12.5px;
-  color: var(--text-muted);
+  font-size: 13.5px;
+  color: var(--text-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -250,19 +261,19 @@
 }
 
 .sidebar-empty-title {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
 }
 
 .sidebar-empty-state p {
   margin: 4px 0 16px;
-  font-size: 13px;
-  color: var(--text-muted);
+  font-size: 14px;
+  color: var(--text-dim);
 }
 
 .sidebar-list-note {
   padding: 12px 20px;
-  font-size: 12.5px;
+  font-size: 13.5px;
   color: var(--text-muted);
   text-align: center;
 }
