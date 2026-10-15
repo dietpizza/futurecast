@@ -384,7 +384,7 @@ function bookCell(depth) {
   const lean = imb >= 12 ? " val-pos" : (imb <= -12 ? " val-neg" : "");
   return `
     <div class="c-book" data-tooltip-title="Order book · top 20 levels" data-tooltip="${esc(`Bids ${formatUsdCompact(depth.bid_depth_usd)} · ${depth.bid_pct}%\nAsks ${formatUsdCompact(depth.ask_depth_usd)} · ${depth.ask_pct}%\nSpread ${formatNumber(depth.spread_bps, 1)} bps`)}">
-      <div class="book-bar"><span style="width:${depth.bid_pct}%"></span></div>
+      <div class="book-bar"><span class="book-bid" style="width:${depth.bid_pct}%"></span><span class="book-ask"></span></div>
       <div class="cell-sub${lean}">${depth.bid_pct}% bids</div>
     </div>`;
 }

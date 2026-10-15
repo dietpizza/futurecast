@@ -30,11 +30,23 @@
   --orange: #c2410c;
   --orange-soft: #fff7ed;
 
+  /* Risk badges: deeper tints plus a matching outline so they stand out on white */
+  --risk-low-bg: #d1fae5;
+  --risk-low-edge: #a7f3d0;
+  --risk-moderate-bg: #fef3c7;
+  --risk-moderate-edge: #fde68a;
+  --risk-high-bg: #ffedd5;
+  --risk-high-edge: #fed7aa;
+  --risk-extreme-bg: #ffe4e6;
+  --risk-extreme-edge: #fecdd3;
+
   --surface-raised: #ffffff;
   --well: #f8fafc;
   --inverse-bg: #111827;
   --inverse-text: #ffffff;
-  --book-ask: #fecdd3;
+  /* Order book bar: bid and ask matched in contrast (~3.7:1 on white) */
+  --book-bid: #059669;
+  --book-ask: #f43f5e;
   --flash-pos: #d1fae5;
   --flash-neg: #ffe4e6;
   --header-bg: rgba(255, 255, 255, 0.92);
@@ -103,9 +115,19 @@
   --orange: #fb923c;
   --orange-soft: rgba(249, 115, 22, 0.15);
 
+  --risk-low-bg: var(--pos-soft);
+  --risk-low-edge: transparent;
+  --risk-moderate-bg: var(--warn-soft);
+  --risk-moderate-edge: transparent;
+  --risk-high-bg: var(--orange-soft);
+  --risk-high-edge: transparent;
+  --risk-extreme-bg: var(--neg-soft);
+  --risk-extreme-edge: transparent;
+
   --inverse-bg: #e7e9ed;
   --inverse-text: #0e1014;
-  --book-ask: rgba(244, 63, 94, 0.35);
+  --book-bid: #0d9f6e;
+  --book-ask: #ef4f6b;
   --flash-pos: rgba(16, 185, 129, 0.28);
   --flash-neg: rgba(244, 63, 94, 0.28);
   --header-bg: rgba(22, 25, 31, 0.88);
@@ -736,17 +758,21 @@ a {
 /* Order book bar */
 .book-bar {
   display: flex;
+  gap: 2px;
   height: 6px;
   max-width: 120px;
   border-radius: 999px;
   overflow: hidden;
-  background: var(--book-ask);
 }
 
-.book-bar span {
-  display: block;
-  height: 100%;
-  background: var(--pos-fill);
+.book-bid {
+  flex: none;
+  background: var(--book-bid);
+}
+
+.book-ask {
+  flex: 1;
+  background: var(--book-ask);
 }
 
 .book-bar.is-empty {
@@ -777,10 +803,10 @@ a {
   opacity: 0.7;
 }
 
-.lvl-low { background: var(--pos-soft); color: var(--pos); }
-.lvl-moderate { background: var(--warn-soft); color: var(--warn); }
-.lvl-high { background: var(--orange-soft); color: var(--orange); }
-.lvl-extreme { background: var(--neg-soft); color: var(--neg); }
+.lvl-low { background: var(--risk-low-bg); box-shadow: inset 0 0 0 1px var(--risk-low-edge); color: var(--pos); }
+.lvl-moderate { background: var(--risk-moderate-bg); box-shadow: inset 0 0 0 1px var(--risk-moderate-edge); color: var(--warn); }
+.lvl-high { background: var(--risk-high-bg); box-shadow: inset 0 0 0 1px var(--risk-high-edge); color: var(--orange); }
+.lvl-extreme { background: var(--risk-extreme-bg); box-shadow: inset 0 0 0 1px var(--risk-extreme-edge); color: var(--neg); }
 
 /* Actions */
 .c-actions {
@@ -954,6 +980,7 @@ a {
   display: block;
   height: 100%;
   border-radius: inherit;
+  box-shadow: none;
 }
 
 .meter .lvl-low { background: var(--pos-fill); }

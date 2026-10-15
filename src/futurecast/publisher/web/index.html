@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
   <title>FutureCast · Win Probability Watchlist</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
 
   <script>
     // Apply the saved theme (or the OS preference) before first paint so the page never flashes.
@@ -26,17 +27,17 @@
   <header class="app-header">
     <div class="app-header-inner">
       <div class="header-left">
-        <button class="icon-btn theme-toggle" id="theme-toggle" onclick="toggleTheme()"
-                aria-label="Switch to dark theme" data-tooltip="Switch to dark theme">
-          <svg class="icon icon-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 10.1A5.6 5.6 0 0 1 5.9 2.8a5.6 5.6 0 1 0 7.3 7.3z" /></svg>
-          <svg class="icon icon-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.75" /><path d="M8 1.5v1.25M8 13.25v1.25M1.5 8h1.25M13.25 8h1.25M3.4 3.4l.9.9M11.7 11.7l.9.9M3.4 12.6l.9-.9M11.7 4.3l.9-.9" /></svg>
-        </button>
         <div class="brand">
           <span class="brand-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24"><path class="brand-past" d="M5 16l3.5-3.5 3 2L15.5 10" /><path class="brand-forecast" d="M15.5 10L19 6.5" /><circle cx="19" cy="6.5" r="1.6" /></svg>
           </span>
           <span class="brand-name">Future<span class="brand-cast">Cast</span></span>
         </div>
+        <button class="icon-btn theme-toggle" id="theme-toggle" onclick="toggleTheme()"
+                aria-label="Switch to dark theme" data-tooltip="Switch to dark theme">
+          <svg class="icon icon-moon" viewBox="0 0 16 16" aria-hidden="true"><path d="M13.2 10.1A5.6 5.6 0 0 1 5.9 2.8a5.6 5.6 0 1 0 7.3 7.3z" /></svg>
+          <svg class="icon icon-sun" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2.75" /><path d="M8 1.5v1.25M8 13.25v1.25M1.5 8h1.25M13.25 8h1.25M3.4 3.4l.9.9M11.7 11.7l.9.9M3.4 12.6l.9-.9M11.7 4.3l.9-.9" /></svg>
+        </button>
       </div>
       <div class="header-actions">
         <div class="ws-status" id="ws-status" data-state="connecting"
