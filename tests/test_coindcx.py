@@ -1,10 +1,12 @@
 """Tests for CoinDCX symbol handling: exchange detection and benchmark routing."""
 
+from futurecast.config import load_config
 from futurecast.ingestion.factory import (
     detect_exchange,
     resolve_benchmarks,
     sanitize_symbol_for_filename,
 )
+from futurecast.publisher.multi_manager import SymbolWorker
 
 
 def test_detect_exchange() -> None:
@@ -21,7 +23,7 @@ def test_resolve_benchmarks() -> None:
     assert benchmarks_usdt == ["B-BTC_USDT", "B-ETH_USDT"]
 
     benchmarks_inr = resolve_benchmarks("I-ETH_INR", "coindcx")
-    assert benchmarks_inr == ["I-BTC_INR", "I-ETH_INR"]
+    assert benchmarks_inr == ["I-BTC_INR", "I-SOL_INR"]
 
     benchmarks_binance = resolve_benchmarks("DOGEUSDT", "binance")
     assert benchmarks_binance == ["BTCUSDT", "ETHUSDT"]
@@ -59,6 +61,26 @@ def test_dynamic_sector_benchmarks() -> None:
 
     # Fallback when sector_aware is explicitly False
     assert resolve_benchmarks("PEPEUSDT", "binance", sector_aware=False) == ["BTCUSDT", "ETHUSDT"]
+
+
+def test_coin_is_never_its_own_benchmark() -> None:
+    # BTC benchmarked against itself duplicated its candle columns and training failed
+    assert resolve_benchmarks("B-BTC_USDT", "coindcx") == ["B-ETH_USDT", "B-SOL_USDT"]
+    assert resolve_benchmarks("B-ETH_USDT", "coindcx") == ["B-BTC_USDT", "B-SOL_USDT"]
+    assert resolve_benchmarks("BTCUSDT", "binance", sector_aware=False) == ["ETHUSDT", "SOLUSDT"]
+    for sym in ("B-BTC_USDT", "B-ETH_USDT", "B-SOL_USDT", "B-DOGE_USDT", "B-BLUR_USDT", "I-BTC_INR", "B-PEPE_USDT"):
+        benchmarks = resolve_benchmarks(sym, "coindcx")
+        assert sym not in benchmarks and len(set(benchmarks)) == 2
+
+
+def test_btc_features_build(tmp_path) -> None:
+    worker = SymbolWorker("B-BTC_USDT", "coindcx", resolve_benchmarks("B-BTC_USDT", "coindcx"),
+                          "MAJOR", load_config(), tmp_path / "models")
+    worker.load_synthetic()
+
+    feats = worker.pipes["5m"].generate_features(worker.candles["5m"])
+    assert feats.columns.is_unique
+    assert worker.latest_event is not None  # the live engine produced a forecast, so the order book shows
 
 
 def test_sanitize_symbol() -> None:

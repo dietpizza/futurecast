@@ -183,30 +183,24 @@ def resolve_benchmarks(
     - DeFi tokens (e.g. UNI, AAVE, CRV) -> [ETH, BTC]
     - NFT/Gaming tokens (e.g. SAND, AXS) -> [BLUR, BTC]
     - AI tokens (e.g. RENDER, FET, TAO) -> [NEAR, BTC]
-    - Category leaders themselves (e.g. DOGE, SOL, ETH, BTC, BLUR) -> [BTC, ETH]
+    - Category leaders themselves (e.g. DOGE, SOL, BLUR) -> [BTC, ETH]
+
+    A coin is never its own benchmark: BTC -> [ETH, SOL] and ETH -> [BTC, SOL]. Benchmarking
+    a coin against itself would duplicate its columns and break feature generation.
     """
     ex = exchange or detect_exchange(target_symbol)
     base, quote = extract_base_and_quote(target_symbol)
 
-    btc_sym = format_benchmark_symbol("BTC", quote, ex)
-    eth_sym = format_benchmark_symbol("ETH", quote, ex)
+    preferred = ["BTC", "ETH"]
+    sector = SECTOR_MAP.get(base) if sector_aware else None
+    if sector:
+        leader_base = SECTOR_LEADERS.get(sector, "BTC")
+        # Leaders and majors are benchmarked against BTC / ETH; everyone else against their leader
+        if base != leader_base and base not in ("BTC", "ETH", "SOL", "DOGE", "BLUR"):
+            preferred = [leader_base, "BTC" if leader_base != "BTC" else "ETH"]
 
-    if not sector_aware:
-        return [btc_sym, eth_sym]
-
-    sector = SECTOR_MAP.get(base)
-    if not sector:
-        return [btc_sym, eth_sym]
-
-    leader_base = SECTOR_LEADERS.get(sector, "BTC")
-
-    # If the token itself is the sector leader or a major benchmark
-    if base == leader_base or base in ("BTC", "ETH", "SOL", "DOGE", "BLUR"):
-        return [btc_sym, eth_sym]
-
-    leader_sym = format_benchmark_symbol(leader_base, quote, ex)
-    secondary_sym = btc_sym if leader_base != "BTC" else eth_sym
-    return [leader_sym, secondary_sym]
+    bases = [b for b in dict.fromkeys(preferred + ["BTC", "ETH", "SOL"]) if b != base][:2]
+    return [format_benchmark_symbol(b, quote, ex) for b in bases]
 
 
 def sanitize_symbol_for_filename(symbol: str) -> str:
