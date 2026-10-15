@@ -65,7 +65,7 @@
       <nav class="segmented" id="timeframe-selector" aria-label="Forecast horizon">
         <span class="segmented-label"
               data-tooltip-title="Forecast horizon"
-              data-tooltip="How long a trade is held at most. 5m, 15m and 1h use 5-minute candles; 4h and 8h use 15-minute candles. Each horizon has its own trained models.">Horizon</span>
+              data-tooltip="How long a trade is held at most. 5m, 15m and 1h use 1-minute candles; 4h and 8h use 15-minute candles. Each horizon has its own trained models.">Horizon</span>
         <button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')">5m</button>
         <button class="tf-btn active" data-tf="15m" onclick="setTimeframe('15m')">15m</button>
         <button class="tf-btn" data-tf="1h" onclick="setTimeframe('1h')">1h</button>
@@ -123,7 +123,7 @@
           <dl class="glossary-list">
             <div class="glossary-item">
               <dt><span class="term-badge">Win</span> Long / short win</dt>
-              <dd>Chance that a trade entered now hits its <strong>take-profit before its stop-loss</strong> within the horizon. Both levels scale with recent volatility; a timeout or touching both in one candle counts as a loss.</dd>
+              <dd>Chance that a trade entered now hits its <strong>take-profit before its stop-loss</strong> within the horizon. The models pick both levels for every candle from a few pairs scaled to recent volatility, taking the pair with the highest expected profit after fees; a timeout or touching both in one candle counts as a loss.</dd>
             </div>
             <div class="glossary-item">
               <dt><span class="term-badge">Needs</span> Break-even</dt>
@@ -153,7 +153,7 @@
             </div>
             <div class="glossary-item">
               <dt><span class="term-badge">Test</span> Tested on unseen data</dt>
-              <dd>Models train on older candles, are calibrated on the next stretch, and are scored on the newest stretch they never saw. "When it said go" replays every signal on that stretch, one trade at a time, after fees.</dd>
+              <dd>Models train on older candles, are calibrated on the next stretch, and are scored on the newest stretch they never saw. "When it said go" replays every signal on that stretch, with the take-profit / stop pair the models would have picked, one trade at a time, after fees.</dd>
             </div>
             <div class="glossary-item">
               <dt><span class="term-badge">AUC</span> Ranking quality</dt>

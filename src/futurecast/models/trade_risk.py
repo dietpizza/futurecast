@@ -32,7 +32,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import joblib
 import lightgbm as lgb
@@ -61,9 +61,9 @@ _SIGMA_COL = "risk_log_horizon_vol"  # the target's own scale, known at entry, g
 class TradeRiskConfig:
     """All lengths (horizons, volatility window) are counted in candles of `interval`."""
 
-    interval: str = "5m"
+    interval: str = "1m"
     barrier: BarrierSpec = field(default_factory=BarrierSpec)  # volatility window and trading cost
-    horizons: Dict[str, int] = field(default_factory=lambda: dict(HORIZONS_BY_INTERVAL["5m"]))
+    horizons: Dict[str, int] = field(default_factory=lambda: dict(HORIZONS_BY_INTERVAL["1m"]))
     quantile: float = 0.95  # share of moves the worst-move bound must contain
     coverage_tolerance: float = 0.03  # test coverage may fall this far below `quantile`
     train_frac: float = 0.6
@@ -346,8 +346,18 @@ class TradeRiskModel:
     def is_trained(self) -> bool:
         return bool(self.sides)
 
-    def fit(self, features: pd.DataFrame, close: pd.Series, high: pd.Series, low: pd.Series) -> Dict[str, Any]:
-        """Fit every horizon/side. Features may contain NaN (handled natively by the boosters)."""
+    def fit(
+        self,
+        features: pd.DataFrame,
+        close: pd.Series,
+        high: pd.Series,
+        low: pd.Series,
+        on_step: Optional[Callable[[str, str], None]] = None,
+    ) -> Dict[str, Any]:
+        """Fit every horizon/side. Features may contain NaN (handled natively by the boosters).
+
+        `on_step(horizon, side)` is called before each horizon/side is fitted.
+        """
         self.feature_names = list(features.columns)
         self.sides = {}
         summary: Dict[str, Any] = {}
@@ -359,6 +369,8 @@ class TradeRiskModel:
             X = features.loc[usable].assign(**{_SIGMA_COL: np.log(sigma[usable])})
             self.sides[h_key] = {}
             for side in SIDES:
+                if on_step is not None:
+                    on_step(h_key, side)
                 z = excursion[f"{side}_mae"].to_numpy()[usable] / sigma[usable]
                 side_risk = _fit_side(X, z, sigma[usable], horizon, self.config)
                 self.sides[h_key][side] = side_risk

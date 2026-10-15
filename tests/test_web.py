@@ -167,15 +167,16 @@ def test_trained_coin_serves_calibrated_trade_probabilities_and_risk(tmp_path):
     sym = "B-DOGE_USDT"
     benches = resolve_benchmarks(sym, "coindcx", sector_aware=True)
     rng = np.random.default_rng(0)
-    target = _synthetic_candles(sym, 5, 4000, rng)
-    aligned = align_cross_asset_data(target, {b: _synthetic_candles(b, 5, 4000, rng) for b in benches}, freq="5min")
+    target = _synthetic_candles(sym, 1, 4000, rng)
+    aligned = align_cross_asset_data(target, {b: _synthetic_candles(b, 1, 4000, rng) for b in benches}, freq="1min")
     feats = FeaturePipeline(target_symbol=sym, primary_benchmark=benches[0], secondary_benchmark=benches[-1]).generate_features(aligned)
-    model = TradeProbabilityModel(TradeModelConfig(interval="5m", horizons={"15m": 3}, max_rounds=40))
+    model = TradeProbabilityModel(TradeModelConfig(interval="1m", horizons={"15m": 15}, levels=((0.5, 0.5), (1.0, 0.5)),
+                                                   max_rounds=40))
     model.fit(feats, aligned[f"{sym}_close"], aligned[f"{sym}_high"], aligned[f"{sym}_low"])
-    model.save(trade_model_path(tmp_path / "models", f"{sanitize_symbol_for_filename(sym)}_5m"))
-    risk = TradeRiskModel(TradeRiskConfig(interval="5m", horizons={"15m": 3}, max_rounds=40))
+    model.save(trade_model_path(tmp_path / "models", f"{sanitize_symbol_for_filename(sym)}_1m"))
+    risk = TradeRiskModel(TradeRiskConfig(interval="1m", horizons={"15m": 15}, max_rounds=40))
     risk.fit(feats, aligned[f"{sym}_close"], aligned[f"{sym}_high"], aligned[f"{sym}_low"])
-    risk.save(risk_model_path(tmp_path / "models", f"{sanitize_symbol_for_filename(sym)}_5m"))
+    risk.save(risk_model_path(tmp_path / "models", f"{sanitize_symbol_for_filename(sym)}_1m"))
 
     app = create_app(initial_symbols=[sym], live_mode=False,
                      persistence_path=tmp_path / "coins.json", models_dir=tmp_path / "models")
@@ -184,10 +185,12 @@ def test_trained_coin_serves_calibrated_trade_probabilities_and_risk(tmp_path):
         probs = coin["trade_probabilities"]
         assert set(probs) == {"15m"}  # only horizons with a trained model, nothing scaled or invented
         h = probs["15m"]
-        assert h["candle_interval"] == "5m" and h["horizon_bars"] == 3
+        assert h["candle_interval"] == "1m" and h["horizon_bars"] == 15
         assert h["signal"] in ("LONG", "SHORT", "NEUTRAL")
-        assert h["tp_pct"] > 0 and h["sl_pct"] > 0
         for side in ("long", "short"):
+            # Take-profit and stop come from the level the models picked for this side
+            assert h[side]["tp_pct"] > 0 and h[side]["sl_pct"] > 0
+            assert h[side]["level"] in ([0.5, 0.5], [1.0, 0.5]) and len(h[side]["levels"]) == 2
             assert 0.0 <= h[side]["probability"] <= 1.0
             assert 0.0 < h[side]["break_even"] < 1.0
             assert h[side]["status"] in ("edge", "no_edge", "insufficient_data")

@@ -285,8 +285,37 @@ function signalKey(signal) {
   return "neutral";
 }
 
+const BUSY_STATUSES = ["queued", "downloading", "training"];
+
+function isBusy(coin) {
+  return BUSY_STATUSES.includes(coin.training_status);
+}
+
+function trainingVerb(coin) {
+  return { queued: "Queued", downloading: "Downloading", training: "Training" }[coin.training_status] || "";
+}
+
+// "Downloading 34%": share of this stage done, from the server's training_progress
+function trainingStage(coin) {
+  const p = coin.training_progress;
+  const verb = trainingVerb(coin);
+  return p && isNum(p.fraction) && coin.training_status !== "queued" ? `${verb} ${Math.floor(p.fraction * 100)}%` : verb;
+}
+
+function trainingDetail(coin) {
+  const p = coin.training_progress;
+  if (coin.training_status === "queued") return "Queued for training (one coin at a time)";
+  if (!p) return coin.training_status === "downloading" ? "Downloading candles…" : "Training on real candles…";
+  if (p.stage === "download") {
+    const counts = p.total ? ` · ${p.done.toLocaleString()} of ${p.total.toLocaleString()} new` : "";
+    return `Downloading ${p.label}${counts} · ${p.step} of ${p.steps}`;
+  }
+  return `Training ${p.label} · step ${p.step} of ${p.steps}`;
+}
+
 function trainingNote(coin) {
   const status = coin.training_status;
+  if (status === "downloading") return "downloading…";
   if (status === "training") return "training…";
   if (status === "queued") return "queued";
   if (status === "failed") return "training failed";
@@ -310,8 +339,8 @@ function signalPill(coin) {
   if (!coin.has_data) return `<span class="pill pill-neutral">Loading</span>`;
   const h = horizonData(coin);
   if (!h) {
-    const busy = coin.training_status === "training" || coin.training_status === "queued";
-    return `<span class="pill ${busy ? "pill-warn" : "pill-neutral"}">${busy ? "Training" : "No model"}</span>`;
+    const busy = isBusy(coin);
+    return `<span class="pill ${busy ? "pill-warn" : "pill-neutral"}">${busy ? trainingVerb(coin) : "No model"}</span>`;
   }
   if (h.signal === "LONG") return `<span class="pill pill-bull">Long</span>`;
   if (h.signal === "SHORT") return `<span class="pill pill-bear">Short</span>`;
@@ -322,11 +351,40 @@ function signalPill(coin) {
   return `<span class="pill pill-neutral">Neutral</span>`;
 }
 
+// Reward to risk of a [take-profit, stop] level in volatility units, e.g. "2:1"
+function rewardRisk(level) {
+  const [tp, sl] = level || [1, 1];
+  const ratio = (a, b) => String(+(a / b).toFixed(1));
+  return tp >= sl ? `${ratio(tp, sl)}:1` : `1:${ratio(sl, tp)}`;
+}
+
+function levelText(side, d) {
+  const up = side === "long";
+  return `${up ? "+" : "−"}${formatNumber(d.tp_pct, 2)}% / ${up ? "−" : "+"}${formatNumber(d.sl_pct, 2)}%`;
+}
+
+// How the take-profit / stop pair was chosen, with every pair the models scored
+function levelTip(side, d) {
+  const levels = d.levels || [];
+  const how = d.level_pick === "model"
+    ? `Picked from ${levels.length} take-profit / stop pairs as the one with the highest expected profit after fees at the models' odds: ${signed(d.expected_return_pct, 3)}% per trade.`
+    : `No pair has a proven edge, so this is the pair whose recent win rate lost least after fees (${signed(d.expected_return_pct, 3)}% per trade).`;
+  const rows = levels.map((o) => {
+    const mark = o.level[0] === d.level[0] && o.level[1] === d.level[1] ? "▸ " : "";
+    const odds = `${pct(o.probability)} win${o.status === "edge" ? "" : " (base rate)"}`;
+    return `${mark}${levelText(side, o)} · ${odds} · ${signed(o.expected_return_pct, 3)}%`;
+  });
+  return {
+    title: `Take-profit and stop · ${rewardRisk(d.level)} reward to risk`,
+    body: [`${formatNumber(d.level[0], 1)}× / ${formatNumber(d.level[1], 1)}× this horizon's volatility, never closer than 2× the round-trip fees.`, how, ...rows].join("\n"),
+  };
+}
+
 function sideTooltip(side, d, h, horizon) {
   const name = side === "long" ? "Long" : "Short";
   const m = d.metrics || {};
   const lines = [
-    `Take-profit ${side === "long" ? "+" : "−"}${formatNumber(h.tp_pct, 2)}% before stop-loss ${side === "long" ? "−" : "+"}${formatNumber(h.sl_pct, 2)}% within ${horizon}`,
+    `Take-profit ${side === "long" ? "+" : "−"}${formatNumber(d.tp_pct, 2)}% before stop-loss ${side === "long" ? "−" : "+"}${formatNumber(d.sl_pct, 2)}% within ${horizon} (${rewardRisk(d.level)}, picked by the models)`,
     `Needs ${pct(d.break_even)} to break even after ${formatNumber(h.cost_pct, 2)}% fees`,
     (STATUS_INFO[d.status] || {}).note || "",
   ];
@@ -439,7 +497,7 @@ function replayText(r) {
 // Why a side is or isn't a trade right now. Mirrors the signal rules in models/trade_probability.py.
 function sideVerdict(h, side) {
   const d = h[side];
-  const r = (d.metrics || {}).replay || {};
+  const r = d.replay || {};
   const odds = `${pct(d.probability)} win odds`;
   const gap = Math.round(d.probability * 100) - Math.round(d.break_even * 100);
   const vsNeeded = gap === 0
@@ -507,10 +565,11 @@ function tradeSide(coin, h, side) {
       + tradeStat("Max leverage", `${risk.max_leverage}x`, "", levTip);
   }
 
-  const replay = (d.metrics || {}).replay;
-  const record = d.status === "edge" && replay
-    ? `<p class="trade-record"><span data-tooltip-title="Replay on unseen data" data-tooltip="Take the trade every time the odds cleared break-even, one position at a time, on history the model never saw. Signals only fire for sides whose replay made money after fees on 10+ trades.">When it said go</span> <strong>${esc(replayText(replay))}</strong></p>`
+  const replay = d.replay;
+  const record = d.status === "edge" && replay && isNum(replay.trades)
+    ? `<p class="trade-record"><span data-tooltip-title="Replay on unseen data" data-tooltip="On every candle of history the models never saw, take the proven take-profit / stop pair with the best expected profit, and trade whenever its odds cleared break-even, one position at a time. Signals only fire for sides whose replay made money after fees on 10+ trades.">When it said go</span> <strong>${esc(replayText(replay))}</strong></p>`
     : "";
+  const tpTip = levelTip(side, d);
 
   return `
     <div class="trade-side is-${v.state}">
@@ -520,8 +579,8 @@ function tradeSide(coin, h, side) {
       </div>
       <p class="trade-why">${esc(v.why)}</p>
       <div class="trade-stats">
-        ${tradeStat("Take-profit", level(up ? 1 : -1, h.tp_pct), `${up ? "+" : "−"}${formatNumber(h.tp_pct, 2)}%`, null, "is-tp")}
-        ${tradeStat("Stop", level(up ? -1 : 1, h.sl_pct), `${up ? "−" : "+"}${formatNumber(h.sl_pct, 2)}%`, null, "is-sl")}
+        ${tradeStat("Take-profit", level(up ? 1 : -1, d.tp_pct), `${up ? "+" : "−"}${formatNumber(d.tp_pct, 2)}% · ${rewardRisk(d.level)}`, tpTip, "is-tp")}
+        ${tradeStat("Stop", level(up ? -1 : 1, d.sl_pct), `${up ? "−" : "+"}${formatNumber(d.sl_pct, 2)}%`, tpTip, "is-sl")}
         ${riskStats}
       </div>
       ${record}
@@ -565,12 +624,11 @@ function horizonsBlock(coin) {
       const odds = h.signal === s.toUpperCase()
         ? `<strong class="${s === "long" ? "val-pos" : "val-neg"}">${pct(h[s].probability)}</strong>`
         : `<span class="${h[s].status === "edge" ? "val-flat" : "val-muted"}">${pct(h[s].probability)}</span>`;
-      return `<td class="num">${odds} <span class="val-muted">/ ${pct(h[s].break_even)}</span></td><td>${statusText(h[s])}</td>`;
+      return `<td class="num">${odds} <span class="val-muted">/ ${pct(h[s].break_even)}</span></td><td class="num val-muted">${levelText(s, h[s])}</td><td>${statusText(h[s])}</td>`;
     };
     return `
       <tr class="${key === currentTimeframe ? "is-current" : ""}" onclick="setTimeframe('${key}')" title="Show ${key}">
         <td><strong>${key}</strong> <span class="val-muted">· ${esc(h.candle_interval)} candles</span></td>
-        <td class="num val-muted">±${formatNumber(h.tp_pct, 2)}%</td>
         ${side("long")}
         ${side("short")}
         <td>${sig}</td>
@@ -591,9 +649,8 @@ function horizonsBlock(coin) {
         <thead>
           <tr>
             <th>Horizon</th>
-            <th class="num" data-tooltip-title="Take-profit and stop-loss" data-tooltip="Distance from entry, scaled to recent volatility and never closer than 2× the round-trip fees.">TP / SL</th>
-            <th class="num">Long win</th><th>Long model</th>
-            <th class="num">Short win</th><th>Short model</th>
+            <th class="num">Long win</th><th class="num" data-tooltip-title="Take-profit / stop" data-tooltip="Per side, the models pick the volatility-scaled pair with the highest expected profit after fees. Never closer than 2× the round-trip fees.">TP / SL</th><th>Long model</th>
+            <th class="num">Short win</th><th class="num">TP / SL</th><th>Short model</th>
             <th>Signal</th>
           </tr>
         </thead>
@@ -648,6 +705,7 @@ function evidenceSide(coin, side, h) {
     <div class="evidence-side">
       ${head}
       <dl class="kv">
+        <dt data-tooltip-title="${esc(levelTip(side, d).title)}" data-tooltip="${esc(levelTip(side, d).body)}">Take-profit / stop</dt><dd>${rewardRisk(d.level)} <span class="val-muted">(best of ${(d.levels || []).length} tried)</span></dd>
         <dt>Recent base rate</dt><dd>${pct(d.base_rate)}</dd>
         ${isNum(m.brier_skill) ? `<dt data-tooltip-title="Brier skill" data-tooltip="How much better the probabilities scored than always quoting the base rate. Above 0 is better; the lower bound is the 90% worst case.">Skill vs base rate</dt><dd>${signed(m.brier_skill, 3)} <span class="val-muted">(≥ ${signed(m.brier_skill_lower, 3)})</span></dd>` : ""}
         ${isNum(m.shrink) && m.shrink < 0.995 ? `<dt data-tooltip-title="Overconfidence correction" data-tooltip="On unseen data the raw odds ran too far from the usual win rate, so they are pulled back toward it by this much before being shown.">Odds tempered</dt><dd>${pct(1 - m.shrink)} toward base rate</dd>` : ""}
@@ -698,8 +756,12 @@ function bookBlock(depth) {
 function detailsFooter(coin, symbol) {
   const benches = (coin.benchmarks || []).map((b) => splitSymbol(b).base).join(", ");
   let training;
-  if (coin.training_status === "training" || coin.training_status === "queued") {
-    training = `<span class="training-tag">${coin.training_status === "queued" ? "Queued for training…" : "Training on real candles…"}</span>`;
+  if (isBusy(coin)) {
+    const p = coin.training_progress;
+    const bar = p && isNum(p.fraction) && coin.training_status !== "queued"
+      ? `<span class="progress-track" aria-hidden="true"><span class="progress-fill" style="width:${Math.round(p.fraction * 100)}%"></span></span>`
+      : "";
+    training = `<span class="training-tag">${esc(trainingDetail(coin))}</span>${bar}`;
   } else {
     const label = coin.is_custom_trained ? "Retrain" : "Train models";
     training = `<button class="btn btn-sm" onclick="trainCoin('${symbol}')">${label}</button>`;
@@ -747,7 +809,7 @@ function renderCoinCard(symbol, flash = false) {
 
   const subParts = [];
   if (coin.sector) subParts.push(esc(sectorLabel(coin.sector)));
-  if (coin.training_status === "training") subParts.push(`<span class="training-tag">Training</span>`);
+  if (isBusy(coin)) subParts.push(`<span class="training-tag">${esc(trainingStage(coin))}</span>`);
 
   card.classList.toggle("is-open", isExpanded);
   card.setAttribute("aria-label", base);
@@ -805,15 +867,18 @@ function updateSummary() {
   }
   const counts = { LONG: 0, SHORT: 0, NEUTRAL: 0 };  // "Unproven" counts as neutral
   let training = 0;
+  let downloading = 0;
   coins.forEach((c) => {
     const h = horizonData(c);
     if (h) counts[h.signal] = (counts[h.signal] || 0) + 1;
-    if (c.training_status === "training" || c.training_status === "queued") training++;
+    if (c.training_status === "downloading") downloading++;
+    else if (isBusy(c)) training++;
   });
   el.innerHTML = `${coins.length} ${coins.length === 1 ? "pair" : "pairs"} · `
     + `<span class="${counts.LONG ? "sum-pos" : ""}">${counts.LONG} long</span> · `
     + `<span class="${counts.SHORT ? "sum-neg" : ""}">${counts.SHORT} short</span> · `
     + `${counts.NEUTRAL} neutral at ${currentTimeframe}`
+    + (downloading ? ` · ${downloading} downloading` : "")
     + (training ? ` · ${training} training` : "");
 }
 

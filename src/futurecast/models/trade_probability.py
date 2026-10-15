@@ -2,7 +2,13 @@
 
 A "win" is the take-profit being touched before the stop-loss (see labels.barriers).
 
-For every horizon and side, LightGBM, XGBoost and CatBoost classifiers are fitted and
+Take-profit and stop are chosen per candle from a small menu of distances (LEVELS, in
+units of horizon volatility: 1:1 tight and wide, 2:1 and 1:2 reward to risk). Every
+level gets its own models below, and for the latest candle the level with the highest
+expected profit after fees is served, so the odds shown always belong to the levels shown.
+Levels with a proven edge are preferred; without one, the pick is by recent base rates.
+
+For every horizon, side and level, LightGBM, XGBoost and CatBoost classifiers are fitted and
 their average is mapped onto observed win frequencies with Platt scaling. History is
 used strictly in time order, each slice separated from the next by one horizon so
 overlapping trade windows cannot leak outcomes across a boundary:
@@ -15,9 +21,11 @@ and scored on the newest slice they never saw. The side earns "edge" only when t
 lower end of a block-bootstrap interval of its Brier skill (vs. quoting the base rate)
 is above zero on enough independent trades; otherwise the recent base rate is served.
 
-Trading check: the test slice is also replayed as a strategy — take the trade whenever
-the calibrated odds clear break-even, one position at a time — and a long/short signal
-is only ever raised for sides whose replay made money after costs.
+Trading check: the test slice is also replayed as a strategy — on every candle pick the
+proven level with the highest expected profit, take the trade whenever its calibrated odds
+clear break-even, one position at a time — and a long/short signal is only ever raised for
+sides whose replay made money after costs. Trying several levels gives luck more chances
+to pass the edge test, so this replay of the pick-the-best rule is the gate that matters.
 
 Out-of-sample shrink: calibrated odds tend to be overconfident on newer data, most of
 all at the extremes where trades get taken. One slope in [0, 1] per side, learned on
@@ -33,10 +41,10 @@ that was tested.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import joblib
 import lightgbm as lgb
@@ -60,12 +68,14 @@ logger = logging.getLogger(__name__)
 
 # Candle interval -> {horizon label: horizon length in candles}
 HORIZONS_BY_INTERVAL: Dict[str, Dict[str, int]] = {
-    "5m": {"5m": 1, "15m": 3, "1h": 12},
+    "1m": {"5m": 5, "15m": 15, "1h": 60},
     "15m": {"4h": 16, "8h": 32},
 }
+# (take-profit, stop) distances tried per horizon and side, in units of horizon volatility
+LEVELS: Tuple[Tuple[float, float], ...] = ((0.5, 0.5), (1.0, 0.5), (0.5, 1.0), (1.0, 1.0))
 SIDES = ("long", "short")
 MODEL_NAMES = ("LightGBM", "XGBoost", "CatBoost")
-FORMAT_VERSION = 5
+FORMAT_VERSION = 6
 
 _EPS = 1e-6
 
@@ -74,9 +84,10 @@ _EPS = 1e-6
 class TradeModelConfig:
     """All lengths (horizons, barrier volatility window) are counted in candles of `interval`."""
 
-    interval: str = "5m"
-    barrier: BarrierSpec = field(default_factory=BarrierSpec)
-    horizons: Dict[str, int] = field(default_factory=lambda: dict(HORIZONS_BY_INTERVAL["5m"]))
+    interval: str = "1m"
+    barrier: BarrierSpec = field(default_factory=BarrierSpec)  # volatility window, cost and take-profit floor
+    horizons: Dict[str, int] = field(default_factory=lambda: dict(HORIZONS_BY_INTERVAL["1m"]))
+    levels: Tuple[Tuple[float, float], ...] = LEVELS
     train_frac: float = 0.6
     calib_frac: float = 0.2  # the test slice gets the remainder
     early_stop_frac: float = 0.2  # tail of a training slice used only for early stopping
@@ -301,13 +312,13 @@ def _replay_trades(p, break_even, pnl, y, horizon: int, cost: float) -> Dict[str
 
 @dataclass
 class SideModel:
-    """Production classifiers + calibrators for one horizon and side, with test evidence."""
+    """Production classifiers + calibrators for one horizon, side and level, with test evidence."""
 
     status: str  # "edge" | "no_edge" | "insufficient_data"
     base_rate: float  # recent win frequency, served when there is no proven edge
+    level: Tuple[float, float] = LEVELS[0]  # (take-profit, stop) in units of horizon volatility
     loss_ratio: float = 1.0  # average non-win loss as a fraction of the stop distance
     shrink: float = 1.0  # out-of-sample overconfidence correction (1 = none)
-    signal_validated: bool = False  # replaying signals on unseen data made money after costs
     models: Dict[str, Any] = field(default_factory=dict)
     calibrators: Dict[str, PlattCalibrator] = field(default_factory=dict)
     ensemble_calibrator: Optional[PlattCalibrator] = None
@@ -351,6 +362,12 @@ def _rolled_slices(n: int, horizon: int, cfg: TradeModelConfig) -> Dict[str, sli
     }
 
 
+def expected_return(p, tp, sl, cost: float, loss_ratio: float = 1.0):
+    """Expected net return per trade: a win earns tp - cost, a non-win loses loss_ratio * sl + cost."""
+    loss = loss_ratio * np.asarray(sl, dtype=float)
+    return np.asarray(p, dtype=float) * (np.asarray(tp, dtype=float) + loss) - (loss + cost)
+
+
 def _loss_ratio(y: np.ndarray, pnl: np.ndarray, sl: np.ndarray) -> float:
     lost = y == 0
     if not lost.any():
@@ -366,7 +383,9 @@ def _fit_side(
     sl: np.ndarray,
     horizon: int,
     cfg: TradeModelConfig,
-) -> SideModel:
+    level: Tuple[float, float] = LEVELS[0],
+) -> Tuple[SideModel, Optional[Dict[str, np.ndarray]]]:
+    """Models for one level, plus its test-slice odds and outcomes (None when untestable)."""
     cost = cfg.barrier.cost
     s = _purged_slices(len(y), horizon, cfg)
     recent_base = float(np.mean(y[s["calib"].start:]))
@@ -376,13 +395,14 @@ def _fit_side(
         return wins >= cfg.min_class_count and len(labels) - wins >= cfg.min_class_count
 
     if not all(enough(y[s[k]]) for k in ("fit", "es", "calib", "test")):
-        return SideModel(status="insufficient_data", base_rate=recent_base,
-                         metrics={"n_rows": int(len(y)), "reason": "too few wins or losses in a slice"})
+        return SideModel(status="insufficient_data", base_rate=recent_base, level=level,
+                         metrics={"n_rows": int(len(y)), "reason": "too few wins or losses in a slice"}), None
 
     # 1. Validate: fit on the oldest data, calibrate on the next slice, score on unseen newest data
     models = _fit_all(X.iloc[s["fit"]], y[s["fit"]], X.iloc[s["es"]], y[s["es"]], horizon, cfg)
     if not models:
-        return SideModel(status="insufficient_data", base_rate=recent_base, metrics={"reason": "no model trained"})
+        return SideModel(status="insufficient_data", base_rate=recent_base, level=level,
+                         metrics={"reason": "no model trained"}), None
     per_model_cal, ens_cal = _calibrate(models, X.iloc[s["calib"]], y[s["calib"]])
 
     seen = slice(0, s["calib"].stop)
@@ -428,12 +448,10 @@ def _fit_side(
         status = "edge"
     else:
         status = "no_edge"
-    signal_validated = (
-        status == "edge"
-        and replay["trades"] >= cfg.min_signal_trades
-        and replay["avg_net_return_pct"] is not None
-        and replay["avg_net_return_pct"] > 0
-    )
+    test_arrays = {
+        "p": p_t, "break_even": be_t, "pnl": pnl[test], "y": y_t,
+        "expected": expected_return(p_t, tp[test], sl[test], cost, loss_ratio),
+    }
 
     # 2. Roll forward: refit on everything but the newest slice, recalibrate on the newest slice
     r = _rolled_slices(len(y), horizon, cfg)
@@ -447,14 +465,61 @@ def _fit_side(
     return SideModel(
         status=status,
         base_rate=recent_base,
+        level=level,
         loss_ratio=loss_ratio,
         shrink=shrink,
-        signal_validated=signal_validated,
         models=models,
         calibrators=per_model_cal,
         ensemble_calibrator=ens_cal,
         metrics=metrics,
+    ), test_arrays
+
+
+@dataclass
+class SideLevels:
+    """Every take-profit / stop level for one horizon and side, and how picking among them did."""
+
+    levels: List[SideModel]
+    signal_validated: bool = False  # picking the best proven level made money on unseen data after costs
+    replay: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def status(self) -> str:
+        """Best status across levels: "edge" if any level has one."""
+        for status in ("edge", "no_edge"):
+            if any(lvl.status == status for lvl in self.levels):
+                return status
+        return "insufficient_data"
+
+
+def _fit_levels(
+    X: pd.DataFrame,
+    labels: List[Dict[str, np.ndarray]],
+    horizon: int,
+    cfg: TradeModelConfig,
+) -> SideLevels:
+    """Fit every level for one side, then replay "trade the best proven level" on the test slice."""
+    fitted = [
+        _fit_side(X, lab["y"], lab["pnl"], lab["tp"], lab["sl"], horizon, cfg, level)
+        for level, lab in zip(cfg.levels, labels)
+    ]
+    side = SideLevels(levels=[model for model, _ in fitted])
+    proven = [t for model, t in fitted if model.status == "edge" and t is not None]
+    if not proven:
+        return side
+
+    # All levels share the same test rows; on each one take the level with the highest expected return
+    stack = {key: np.vstack([t[key] for t in proven]) for key in proven[0]}
+    best = np.argmax(stack["expected"], axis=0)
+    rows = np.arange(best.size)
+    pick = {key: values[best, rows] for key, values in stack.items()}
+    side.replay = _replay_trades(pick["p"], pick["break_even"], pick["pnl"], pick["y"], horizon, cfg.barrier.cost)
+    side.signal_validated = (
+        side.replay["trades"] >= cfg.min_signal_trades
+        and side.replay["avg_net_return_pct"] is not None
+        and side.replay["avg_net_return_pct"] > 0
     )
+    return side
 
 
 # ───────────────────────── public model ─────────────────────────
@@ -476,41 +541,54 @@ class TradeProbabilityModel:
     def is_trained(self) -> bool:
         return bool(self.sides)
 
-    def fit(self, features: pd.DataFrame, close: pd.Series, high: pd.Series, low: pd.Series) -> Dict[str, Any]:
-        """Fit every horizon/side. Features may contain NaN (handled natively by the boosters)."""
-        spec = self.config.barrier
+    def _spec(self, level: Tuple[float, float]) -> BarrierSpec:
+        return replace(self.config.barrier, tp_vol_mult=level[0], sl_vol_mult=level[1])
+
+    def fit(
+        self,
+        features: pd.DataFrame,
+        close: pd.Series,
+        high: pd.Series,
+        low: pd.Series,
+        on_step: Optional[Callable[[str, str], None]] = None,
+    ) -> Dict[str, Any]:
+        """Fit every horizon/side/level. Features may contain NaN (handled natively by the boosters).
+
+        `on_step(horizon, side)` is called before each horizon/side is fitted.
+        """
         self.feature_names = list(features.columns)
         self.sides = {}
         summary: Dict[str, Any] = {}
 
         for h_key, horizon in self.config.horizons.items():
-            sigma = horizon_volatility(close, horizon, spec)
-            tp, sl = barrier_distances(sigma, spec)
-            outcomes = first_touch_labels(close, high, low, tp, sl, horizon)
+            sigma = horizon_volatility(close, horizon, self.config.barrier)
+            per_level = []
+            for level in self.config.levels:
+                tp, sl = barrier_distances(sigma, self._spec(level))
+                per_level.append((tp, sl, first_touch_labels(close, high, low, tp, sl, horizon)))
 
-            known = outcomes["long_win"].notna().to_numpy()
+            known = per_level[0][2]["long_win"].notna().to_numpy()  # same rows for every level
             X = features.loc[known]
             self.sides[h_key] = {}
             for side in SIDES:
-                side_model = _fit_side(
-                    X,
-                    outcomes[f"{side}_win"].to_numpy()[known],
-                    outcomes[f"{side}_pnl"].to_numpy()[known],
-                    tp[known],
-                    sl[known],
-                    horizon,
-                    self.config,
-                )
-                self.sides[h_key][side] = side_model
-                m = side_model.metrics
+                if on_step is not None:
+                    on_step(h_key, side)
+                labels = [
+                    {"y": out[f"{side}_win"].to_numpy()[known], "pnl": out[f"{side}_pnl"].to_numpy()[known],
+                     "tp": tp[known], "sl": sl[known]}
+                    for tp, sl, out in per_level
+                ]
+                side_levels = _fit_levels(X, labels, horizon, self.config)
+                self.sides[h_key][side] = side_levels
                 summary[f"{h_key}_{side}"] = {
-                    "status": side_model.status,
-                    "signal_validated": side_model.signal_validated,
-                    "brier_skill": m.get("brier_skill"),
-                    "brier_skill_lower": m.get("brier_skill_lower"),
-                    "auc": m.get("auc"),
-                    "n_independent": m.get("n_independent"),
-                    "replay": m.get("replay"),
+                    "status": side_levels.status,
+                    "signal_validated": side_levels.signal_validated,
+                    "replay": side_levels.replay,
+                    "levels": [
+                        {"level": list(lvl.level), "status": lvl.status,
+                         "brier_skill_lower": lvl.metrics.get("brier_skill_lower"), "auc": lvl.metrics.get("auc")}
+                        for lvl in side_levels.levels
+                    ],
                 }
                 logger.info(f"Trade model {h_key} {side}: {summary[f'{h_key}_{side}']}")
 
@@ -520,42 +598,59 @@ class TradeProbabilityModel:
         return summary
 
     def predict_latest(self, features: pd.DataFrame, close: pd.Series) -> Dict[str, Any]:
-        """Win probabilities, barrier levels and a trade signal for the latest bar, per horizon."""
-        spec = self.config.barrier
+        """Win probabilities, picked take-profit / stop and a trade signal for the latest bar, per horizon."""
+        cost = self.config.barrier.cost
         X = features.reindex(columns=self.feature_names).iloc[[-1]]
         entry = float(close.iloc[-1])
         out: Dict[str, Any] = {}
 
         for h_key, horizon in self.config.horizons.items():
-            sigma = float(horizon_volatility(close, horizon, spec).iloc[-1])
+            sigma = float(horizon_volatility(close, horizon, self.config.barrier).iloc[-1])
             if not np.isfinite(sigma) or entry <= 0:
                 continue
-            tp, sl = (float(v) for v in barrier_distances(sigma, spec))
 
             sides_out: Dict[str, Any] = {}
-            margins: Dict[str, float] = {}
+            expected: Dict[str, float] = {}
             for side in SIDES:
-                model = self.sides.get(h_key, {}).get(side)
-                if model is None:
+                side_levels = self.sides.get(h_key, {}).get(side)
+                if side_levels is None:
                     continue
-                be = float(break_even_probability(tp, sl, spec.cost, model.loss_ratio))
-                pred = model.predict(X)
+                options = []
+                for lvl in side_levels.levels:
+                    tp, sl = (float(v) for v in barrier_distances(sigma, self._spec(lvl.level)))
+                    pred = lvl.predict(X)
+                    options.append((lvl, tp, sl, pred, float(expected_return(pred["probability"], tp, sl, cost, lvl.loss_ratio))))
+                proven = [o for o in options if o[0].status == "edge"]
+                lvl, tp, sl, pred, ev = max(proven or options, key=lambda o: o[4])
                 sides_out[side] = {
                     **pred,
-                    "break_even": round(be, 4),
-                    "status": model.status,
-                    "signal_validated": model.signal_validated,
-                    "base_rate": model.base_rate,
-                    "metrics": {k: v for k, v in model.metrics.items() if k != "reliability"},
-                    "reliability": model.metrics.get("reliability", []),
+                    "break_even": round(float(break_even_probability(tp, sl, cost, lvl.loss_ratio)), 4),
+                    "tp_pct": round(tp * 100, 4),
+                    "sl_pct": round(sl * 100, 4),
+                    "level": list(lvl.level),
+                    "level_pick": "model" if proven else "base_rate",
+                    "expected_return_pct": round(ev * 100, 4),
+                    "status": lvl.status,
+                    "signal_validated": side_levels.signal_validated,
+                    "base_rate": lvl.base_rate,
+                    "replay": side_levels.replay,
+                    # the level's own replay is left out: signals are gated on `replay`, the pick-the-best rule
+                    "metrics": {k: v for k, v in lvl.metrics.items() if k not in ("reliability", "replay")},
+                    "reliability": lvl.metrics.get("reliability", []),
+                    "levels": [
+                        {"level": list(o[0].level), "tp_pct": round(o[1] * 100, 4), "sl_pct": round(o[2] * 100, 4),
+                         "probability": o[3]["probability"], "expected_return_pct": round(o[4] * 100, 4),
+                         "status": o[0].status}
+                        for o in options
+                    ],
                 }
-                if model.status == "edge" and model.signal_validated:
-                    margins[side] = pred["probability"] - be
+                if lvl.status == "edge" and side_levels.signal_validated:
+                    expected[side] = ev
             if not sides_out:
                 continue
 
-            best = max(margins, key=margins.get) if margins else None
-            signal = best.upper() if best is not None and margins[best] >= 0 else "NEUTRAL"
+            best = max(expected, key=expected.get) if expected else None
+            signal = best.upper() if best is not None and expected[best] >= 0 else "NEUTRAL"
 
             # Barriers are percentages: apply them to the exchange's live price for levels
             out[h_key] = {
@@ -563,9 +658,7 @@ class TradeProbabilityModel:
                 "horizon_bars": horizon,
                 "as_of": str(close.index[-1]),
                 "signal": signal,
-                "tp_pct": round(tp * 100, 4),
-                "sl_pct": round(sl * 100, 4),
-                "cost_pct": round(spec.cost * 100, 4),
+                "cost_pct": round(cost * 100, 4),
                 **sides_out,
             }
         return out

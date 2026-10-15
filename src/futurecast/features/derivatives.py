@@ -23,8 +23,8 @@ def compute_derivative_features(
     t_close = df[f"{target_symbol}_close"]
 
     # 1. Funding Rate Deviation (target vs its trailing 3-day mean). The window is clock time,
-    # so the live candle buffer (5.5 days of 5m candles) holds all of it and reproduces the
-    # training value exactly; a 3-day EMA over candles would depend on how much history is loaded.
+    # so the live candle buffer (LIVE_BARS: ~4 days of 1m candles) holds all of it and reproduces
+    # the training value exactly; a 3-day EMA over candles would depend on how much history is loaded.
     if f"{target_symbol}_funding_rate" in df.columns:
         f_target = df[f"{target_symbol}_funding_rate"]
         f_mean = f_target.rolling(f"{funding_window_min}min", min_periods=60).mean()

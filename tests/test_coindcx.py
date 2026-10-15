@@ -78,7 +78,7 @@ def test_btc_features_build(tmp_path) -> None:
                           "MAJOR", load_config(), tmp_path / "models")
     worker.load_synthetic()
 
-    feats = worker.pipes["5m"].generate_features(worker.candles["5m"])
+    feats = worker.pipes["1m"].generate_features(worker.candles["1m"])
     assert feats.columns.is_unique
     assert worker.latest_event is not None  # the live engine produced a forecast, so the order book shows
 

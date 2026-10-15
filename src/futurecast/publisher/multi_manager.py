@@ -1,10 +1,12 @@
 """Multi-coin stream manager: real closed candles in, calibrated trade probabilities out.
 
-Every model input comes from fully closed 5m and 15m candles of the Binance perpetual
+Every model input comes from fully closed 1m and 15m candles of the Binance perpetual
 behind the CoinDCX pair (BinancePublicClient.fetch_candle_history). New candles are pulled
 when one closes; between candles only the displayed Binance price and the order book refresh.
+Downloaded candles are kept on disk (<home>/cache/candles), so a retrain or restart only
+fetches the candles that closed since.
 
-- 5m candles: residual-alpha models, microstructure, and the 5m / 15m / 1h win-probability
+- 1m candles: residual-alpha models, microstructure, and the 5m / 15m / 1h win-probability
   and trade-risk horizons.
 - 15m candles: the 4h / 8h win-probability and trade-risk horizons (more history per candle).
 """
@@ -17,19 +19,21 @@ import json
 import logging
 from pathlib import Path
 import threading
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 import pandas as pd
 
-from futurecast.config import AppConfig, DataSourceConfig, load_config
+from futurecast.config import AppConfig, AssetsConfig, load_config
 from futurecast.engine.forecaster import PureForecastEngine
 from futurecast.features.orderbook import compute_orderbook_metrics
 from futurecast.features.pipeline import FeaturePipeline
 from futurecast.features.shitcoin import is_high_beta_shitcoin
 from futurecast.ingestion.binance import BinancePublicClient
+from futurecast.ingestion.cache import CandleCache
 from futurecast.ingestion.factory import (
     detect_exchange,
+    extract_base_and_quote,
     get_symbol_sector,
     resolve_benchmarks,
     sanitize_symbol_for_filename,
@@ -49,12 +53,15 @@ from futurecast.schema import ForecastEvent
 
 logger = logging.getLogger(__name__)
 
-CANDLE_MINUTES: Dict[str, int] = {"5m": 5, "15m": 15}
-ENGINE_INTERVAL = "5m"
+CANDLE_MINUTES: Dict[str, int] = {"1m": 1, "15m": 15}
+ENGINE_INTERVAL = "1m"
 RESIDUAL_HORIZON_MINUTES = 15
-HISTORY_BARS = 20_000  # per interval for training: ~69 days of 5m, ~208 days of 15m candles
-LIVE_BARS = 1_600  # per interval kept live; the longest feature window is 1,440 candles
-MIN_TRAIN_BARS = 3_000
+HISTORY_BARS: Dict[str, int] = {"1m": 100_000, "15m": 20_000}  # training: ~69 days of 1m, ~208 days of 15m
+MIN_TRAIN_BARS: Dict[str, int] = {"1m": 15_000, "15m": 3_000}  # ~10 and ~31 days
+# Per interval kept live: above the longest feature window (1,440 candles) and, at 1m, the clock-time
+# funding mean (3 days = 4,320 candles), so live features match the ones the models were trained on
+LIVE_BARS = 6_000
+CACHE_BARS = 120_000  # candles kept on disk per market and interval: training history plus newer candles
 
 
 def _synthetic_candles(symbol: str, minutes: int, bars: int, rng: np.random.Generator) -> pd.DataFrame:
@@ -74,9 +81,15 @@ def _synthetic_candles(symbol: str, minutes: int, bars: int, rng: np.random.Gene
     })
 
 
-def _binance_client(source: DataSourceConfig) -> BinancePublicClient:
+def _binance_client(assets: AssetsConfig) -> BinancePublicClient:
+    source, storage = assets.data_source, assets.storage
+    cache = CandleCache(Path(storage.cache_dir) / "candles", max_rows=CACHE_BARS) if storage.use_cache else None
     return BinancePublicClient(base_url=source.base_url, timeout=source.request_timeout_sec,
-                               max_retries=source.max_retries)
+                               max_retries=source.max_retries, candle_cache=cache)
+
+
+def _base(symbol: str) -> str:
+    return extract_base_and_quote(symbol)[0]
 
 
 def _json_safe(obj: Any) -> Any:
@@ -151,6 +164,7 @@ class SymbolWorker:
         self.is_custom_trained = all(self.trade_models.values()) and all(self.risk_models.values())
         self.training_status = "trained" if self.is_custom_trained else "untrained"
         self.training_error: Optional[str] = None
+        self.training_progress: Optional[Dict[str, Any]] = None  # what training is doing right now
         self.training_report: Dict[str, Any] = {}
 
         self.engine = self._make_engine()
@@ -194,14 +208,30 @@ class SymbolWorker:
 
     # ───────── candles ─────────
 
-    def _fetch_aligned(self, client: BinancePublicClient, interval: str, bars: int) -> Tuple[pd.DataFrame, Optional[str]]:
-        """Closed candles with each coin's settled funding rate, target and benchmarks on one time grid."""
-        target, source = client.fetch_candle_history(self.symbol, interval, bars, funding=True)
+    def _fetch_aligned(
+        self,
+        client: BinancePublicClient,
+        interval: str,
+        bars: int,
+        progress: Optional[Callable[[str, int, int], None]] = None,
+    ) -> Tuple[pd.DataFrame, Optional[str]]:
+        """Closed candles with each coin's settled funding rate, target and benchmarks on one time grid.
+
+        `progress(symbol, done, total)` reports candles downloaded per symbol (0, 0 as each starts).
+        """
+        def fetch(sym: str) -> Tuple[pd.DataFrame, Optional[str]]:
+            if progress is None:
+                return client.fetch_candle_history(sym, interval, bars, funding=True)
+            progress(sym, 0, 0)
+            return client.fetch_candle_history(sym, interval, bars, funding=True,
+                                               progress=lambda done, total: progress(sym, done, total))
+
+        target, source = fetch(self.symbol)
         if target.empty:
             return pd.DataFrame(), None
         benches = {}
         for bench in self.benchmarks:
-            bench_df, _ = client.fetch_candle_history(bench, interval, bars, funding=True)
+            bench_df, _ = fetch(bench)
             if bench_df.empty:
                 return pd.DataFrame(), None
             benches[bench] = bench_df
@@ -329,44 +359,75 @@ class SymbolWorker:
         )
         return ensemble, metrics
 
+    def _set_progress(self, stage: str, label: str, step: int, steps: int, done: int = 0, total: int = 0) -> None:
+        within = done / total if total else 0.0
+        self.training_progress = {
+            "stage": stage, "label": label, "step": step, "steps": steps, "done": done, "total": total,
+            "fraction": round((step - 1 + within) / steps, 4),
+        }
+
     def train_sync(self, days: int = 0) -> Dict[str, Any]:
         """Fetch real candle history, validate and fit all models, then hot-swap them in.
 
         `days` is accepted for API compatibility; history depth is HISTORY_BARS per interval.
-        Never trains on synthetic data: if the exchange cannot supply enough candles the
-        coin stays untrained and the error is reported.
+        Every interval is downloaded first (status "downloading", candles already in the disk
+        cache are not fetched again), then the models are fitted (status "training"), with
+        `training_progress` describing the current step. Never trains on synthetic data: if
+        the exchange cannot supply enough candles the coin stays untrained and the error is reported.
         """
-        self.training_status = "training"
+        self.training_status = "downloading"
         self.training_error = None
-        client = _binance_client(self.config.assets.data_source)
+        client = _binance_client(self.config.assets)
         report: Dict[str, Any] = {"data": {}, "trade": {}, "risk": {}}
         try:
             if client.resolve(self.symbol) is None:
                 raise RuntimeError(f"no trading Binance perpetual found for {self.symbol}")
+
+            downloads = [(iv, sym) for iv in CANDLE_MINUTES for sym in (self.symbol, *self.benchmarks)]
+            aligned_by_iv: Dict[str, pd.DataFrame] = {}
+            for iv in CANDLE_MINUTES:
+                def downloaded(sym: str, done: int, total: int, iv: str = iv) -> None:
+                    self._set_progress("download", f"{iv} candles · {_base(sym)}",
+                                       downloads.index((iv, sym)) + 1, len(downloads), done, total)
+
+                aligned, source = self._fetch_aligned(client, iv, HISTORY_BARS[iv], progress=downloaded)
+                if len(aligned) < MIN_TRAIN_BARS[iv]:
+                    raise RuntimeError(f"only {len(aligned)} closed {iv} candles available (need {MIN_TRAIN_BARS[iv]})")
+                aligned_by_iv[iv] = aligned
+                report["data"][iv] = {"source": source, "candles": len(aligned),
+                                      "start": str(aligned.index[0]), "end": str(aligned.index[-1])}
+
+            self.training_status = "training"
+            steps = sum(1 + 4 * len(HORIZONS_BY_INTERVAL[iv]) for iv in CANDLE_MINUTES) + 1
+            done_steps = 0
+
+            def advance(label: str) -> None:
+                nonlocal done_steps
+                done_steps += 1
+                self._set_progress("train", label, done_steps, steps)
+
             trade_models: Dict[str, TradeProbabilityModel] = {}
             risk_models: Dict[str, TradeRiskModel] = {}
             history: Dict[str, Tuple[pd.DataFrame, pd.DataFrame]] = {}
-            for iv in CANDLE_MINUTES:
-                aligned, source = self._fetch_aligned(client, iv, HISTORY_BARS)
-                if len(aligned) < MIN_TRAIN_BARS:
-                    raise RuntimeError(f"only {len(aligned)} closed {iv} candles available (need {MIN_TRAIN_BARS})")
+            for iv, aligned in aligned_by_iv.items():
+                advance(f"{iv} candle features")
                 feats = self.pipes[iv].generate_features(aligned)
                 ohlc = (aligned[f"{self.symbol}_close"], aligned[f"{self.symbol}_high"], aligned[f"{self.symbol}_low"])
                 model = TradeProbabilityModel(TradeModelConfig(interval=iv, horizons=dict(HORIZONS_BY_INTERVAL[iv])))
-                report["trade"][iv] = model.fit(feats, *ohlc)
+                report["trade"][iv] = model.fit(feats, *ohlc, on_step=lambda h, side: advance(f"{h} {side} win odds"))
                 risk = TradeRiskModel(TradeRiskConfig(interval=iv, horizons=dict(HORIZONS_BY_INTERVAL[iv])))
-                report["risk"][iv] = risk.fit(feats, *ohlc)
-                risk_models[iv] = risk
-                report["data"][iv] = {"source": source, "candles": len(aligned),
-                                      "start": str(aligned.index[0]), "end": str(aligned.index[-1])}
+                report["risk"][iv] = risk.fit(feats, *ohlc, on_step=lambda h, side: advance(f"{h} {side} worst move"))
                 trade_models[iv] = model
+                risk_models[iv] = risk
                 history[iv] = (aligned, feats)
 
-            aligned5, feats5 = history[ENGINE_INTERVAL]
-            ensemble, report["residual"] = self._train_residual(aligned5, feats5)
+            advance("residual alpha")
+            aligned1, feats1 = history[ENGINE_INTERVAL]
+            ensemble, report["residual"] = self._train_residual(aligned1, feats1)
         except Exception as err:
             self.training_status = "failed"
             self.training_error = str(err)
+            self.training_progress = None
             logger.error(f"Training failed for {self.symbol}: {err}")
             raise
         finally:
@@ -397,6 +458,7 @@ class SymbolWorker:
                 self._update_trade_models(iv)
             self.is_custom_trained = True
             self.training_status = "trained"
+            self.training_progress = None
             self.training_report = report
 
         logger.info(f"Trained and hot-reloaded models for {self.symbol}")
@@ -420,6 +482,7 @@ class SymbolWorker:
                 "has_data": not candles.empty,
                 "is_custom_trained": self.is_custom_trained,
                 "training_status": self.training_status,
+                "training_progress": self.training_progress,
                 "training_error": self.training_error,
                 "data_source": self.data_source,
                 "candle_time": str(candles.index[-1]) if not candles.empty else None,
@@ -539,7 +602,7 @@ class MultiCoinStreamManager:
         worker.training_status = "queued"
         await self.broadcast({"type": "FORECAST_UPDATE", **worker.snapshot()})
         async with self._train_lock:
-            worker.training_status = "training"
+            worker.training_status = "downloading"
             await self.broadcast({"type": "FORECAST_UPDATE", **worker.snapshot()})
             loop = asyncio.get_running_loop()
             try:
@@ -590,7 +653,7 @@ class MultiCoinStreamManager:
         self._running = True
         self.live = live
         logger.info(f"Starting stream loop (interval: {poll_interval_sec}s, live: {live})...")
-        client = _binance_client(self.config.assets.data_source)
+        client = _binance_client(self.config.assets)
         if live:
             self.ensure_trained()
 

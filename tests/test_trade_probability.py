@@ -76,7 +76,7 @@ def _synthetic_market(n, predictive, seed):
 
 @pytest.fixture(scope="module")
 def fast_config():
-    return TradeModelConfig(horizons={"15m": 15}, max_rounds=150)
+    return TradeModelConfig(horizons={"15m": 15}, levels=((0.5, 0.5),), max_rounds=150)
 
 
 def test_model_finds_real_edge_and_is_calibrated(fast_config):
@@ -85,7 +85,7 @@ def test_model_finds_real_edge_and_is_calibrated(fast_config):
     model.fit(features, close, high, low)
 
     for side in ("long", "short"):
-        sm = model.sides["15m"][side]
+        sm = model.sides["15m"][side].levels[0]
         assert sm.status == "edge", sm.metrics
         assert sm.metrics["brier_skill"] > 0.05
         assert sm.metrics["auc"] > 0.65
@@ -108,7 +108,7 @@ def test_model_without_edge_serves_base_rate(fast_config):
     out = model.predict_latest(features, close)["15m"]
 
     for side in ("long", "short"):
-        sm = model.sides["15m"][side]
+        sm = model.sides["15m"][side].levels[0]
         assert sm.metrics["brier_skill"] < 0.02  # nothing to learn from noise
         if sm.status != "edge":
             assert out[side]["probability"] == pytest.approx(sm.base_rate)
@@ -122,6 +122,36 @@ def test_too_little_history_is_flagged_not_guessed():
     model.fit(features, close, high, low)
     for side in ("long", "short"):
         assert model.sides["4h"][side].status == "insufficient_data"
+        assert [lvl.status for lvl in model.sides["4h"][side].levels] == ["insufficient_data"] * 4
+
+
+def test_served_levels_are_the_best_proven_pick():
+    features, close, high, low = _synthetic_market(6000, predictive=True, seed=7)
+    model = TradeProbabilityModel(TradeModelConfig(horizons={"15m": 15}, max_rounds=80))
+    steps = []
+    model.fit(features, close, high, low, on_step=lambda h, side: steps.append((h, side)))
+    assert steps == [("15m", "long"), ("15m", "short")]
+
+    up = features.copy()
+    up.iloc[-1, up.columns.get_loc("regime")] = 3.0
+    out = model.predict_latest(up, close)["15m"]
+    for side in ("long", "short"):
+        d = out[side]
+        assert len(d["levels"]) == 4
+        proven = [o for o in d["levels"] if o["status"] == "edge"]
+        assert proven, d["levels"]  # the drift is learnable at some distance
+        best = max(proven, key=lambda o: o["expected_return_pct"])
+        assert d["level"] == best["level"] and d["level_pick"] == "model"
+        assert (d["tp_pct"], d["sl_pct"], d["probability"]) == (best["tp_pct"], best["sl_pct"], best["probability"])
+        assert d["sl_pct"] / d["tp_pct"] == pytest.approx(d["level"][1] / d["level"][0])
+        # Expected return and break-even describe the same trade
+        assert (d["expected_return_pct"] >= 0) == (d["probability"] >= d["break_even"] - 1e-4)
+        assert d["replay"]["trades"] >= 0 and "replay" not in d["metrics"]
+
+    assert out["long"]["probability"] > out["short"]["probability"]
+    if out["signal"] != "NEUTRAL":
+        side = out["signal"].lower()
+        assert out[side]["signal_validated"] and out[side]["expected_return_pct"] >= 0
 
 
 def test_save_load_roundtrip(tmp_path, fast_config):

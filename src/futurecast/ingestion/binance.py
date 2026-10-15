@@ -12,12 +12,13 @@ from dataclasses import dataclass
 import logging
 import threading
 import time
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import httpx
 import numpy as np
 import pandas as pd
 
+from futurecast.ingestion.cache import CandleCache
 from futurecast.ingestion.factory import extract_base_and_quote
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ class BinancePublicClient:
         markets_ttl_sec: float = 3600.0,
         weight_budget: int = int(_WEIGHT_LIMIT_1M * 0.8),
         funding_budget: int = int(_FUNDING_LIMIT_5M * 0.8),
+        candle_cache: Optional[CandleCache] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
@@ -93,6 +95,7 @@ class BinancePublicClient:
         self._funding_calls: deque = deque()
         # Binance symbol -> (covered from ms, downloaded at ms, events with columns time, funding_rate)
         self._funding: Dict[str, Tuple[int, int, pd.DataFrame]] = {}
+        self.candle_cache = candle_cache
 
     @property
     def client(self) -> httpx.Client:
@@ -284,18 +287,20 @@ class BinancePublicClient:
     def fetch_candle_history(
         self,
         symbol: str,
-        interval: str = "5m",
+        interval: str = "1m",
         bars: int = 1500,
         end_time_ms: Optional[int] = None,
         funding: bool = False,
+        progress: Optional[Callable[[int, int], None]] = None,
     ) -> Tuple[pd.DataFrame, Optional[str]]:
         """Newest `bars` fully closed candles for a CoinDCX pair from its Binance perpetual, oldest first.
 
-        Pages walk backward from the last closed candle, so the still-forming candle is never
-        included. Prices are Binance's (a 1000x listing stays in 1000x units). With `funding`,
-        a funding_rate column holds the latest rate settled before each candle closed (NaN before
-        the first settlement on record). Returns (candles, source); source is None when Binance
-        has no market for the pair.
+        Candles come from the disk cache when the client has one; only the candles it is
+        missing are downloaded (see _closed_klines). The still-forming candle is never included.
+        Prices are Binance's (a 1000x listing stays in 1000x units). With `funding`, a
+        funding_rate column holds the latest rate settled before each candle closed (NaN before
+        the first settlement on record). `progress(done, total)` counts downloaded candles.
+        Returns (candles, source); source is None when Binance has no market for the pair.
         """
         empty = pd.DataFrame(columns=self._HISTORY_COLS)
         market = self._require(symbol)
@@ -304,31 +309,12 @@ class BinancePublicClient:
 
         step = interval_to_ms(interval)
         now_ms = int(time.time() * 1000) if end_time_ms is None else int(end_time_ms)
-        last_closed_open = (now_ms // step) * step - step
-        curr_end = last_closed_open + step - 1
-
-        rows: List[list] = []
-        while len(rows) < bars:
-            want = min(bars - len(rows), _KLINE_PAGE)
-            page = self._get("/fapi/v1/klines", {
-                "symbol": market.symbol, "interval": interval, "endTime": curr_end, "limit": want,
-            })
-            if not page:
-                break
-            rows.extend(page)
-            curr_end = min(int(r[0]) for r in page) - 1
-            if len(page) < want:  # reached the listing date
-                break
-        if not rows:
+        last_open = (now_ms // step) * step - step
+        df = self._closed_klines(market.symbol, interval, last_open - (bars - 1) * step, last_open, progress)
+        if df.empty:
             return empty, None
 
-        df = pd.DataFrame(
-            [(int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]),
-              float(r[7]), int(r[8]), float(r[9]), float(r[10])) for r in rows],
-            columns=["time", "open", "high", "low", "close", "volume", "quote_volume",
-                     "count", "taker_buy_volume", "taker_buy_quote_volume"],
-        )
-        df = df[df["time"] <= last_closed_open].drop_duplicates("time").sort_values("time").tail(bars)
+        df = df.tail(bars).copy()
         df["timestamp"] = pd.to_datetime(df["time"], unit="ms", utc=True)
         df["symbol"] = symbol
         cols = list(self._HISTORY_COLS)
@@ -338,6 +324,103 @@ class BinancePublicClient:
             df["funding_rate"] = funding_known_at(close_ms, events)
             cols.append("funding_rate")
         return df[cols].reset_index(drop=True), f"binance:{market.symbol}"
+
+    def _closed_klines(
+        self,
+        market: str,
+        interval: str,
+        first_open: int,
+        last_open: int,
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> pd.DataFrame:
+        """Closed candles opening between `first_open` and `last_open` (ms), oldest first.
+
+        With a cache, only the stretches outside its span are downloaded: newer candles up to
+        `last_open`, then older ones back to `first_open`. A new span that cannot join the
+        cached one (a request far older, or a gap longer than the cache keeps) is downloaded
+        whole. Every finished download is merged into the cache; an interrupted walk back is
+        kept too, since what it fetched still joins the span.
+        """
+        step = interval_to_ms(interval)
+        cache = self.candle_cache
+        have, span = cache.load(market, interval) if cache is not None else (CandleCache.empty(), None)
+        if span is not None and (last_open < span[0] - step or (last_open - span[1]) // step > cache.max_rows):
+            have, span = CandleCache.empty(), None
+
+        if span is None:
+            jobs = [(first_open, last_open)]
+        else:
+            jobs = []
+            if last_open > span[1]:
+                jobs.append((span[1] + step, last_open))
+            if first_open < span[0]:
+                jobs.append((first_open, span[0] - step))
+        total = sum((hi - lo) // step + 1 for lo, hi in jobs)
+
+        frames = [have]
+        done = 0
+        for lo, hi in jobs:
+            rows: List[list] = []
+            report = (lambda n, base=done: progress(base + n, total)) if progress is not None else None
+            listed = None
+            try:
+                listed = self._walk_back(market, interval, lo, hi, rows, report)
+            finally:
+                got = self._kline_frame(rows, lo, hi)
+                frames.append(got)
+                done += (hi - lo) // step + 1
+                if cache is not None and listed is not None:  # finished: the whole stretch is covered
+                    cache.store(market, interval, step, got, 0 if listed else lo, hi)
+                elif cache is not None and len(got) and (span is None or hi < span[0]):
+                    # interrupted, but a walk back from the span's start still joins it
+                    cache.store(market, interval, step, got, int(got["time"].iloc[0]), hi)
+
+        df = pd.concat([f for f in frames if len(f)] or [CandleCache.empty()], ignore_index=True)
+        df = df.drop_duplicates("time", keep="last").sort_values("time")
+        return df[(df["time"] >= first_open) & (df["time"] <= last_open)].reset_index(drop=True)
+
+    def _walk_back(
+        self,
+        market: str,
+        interval: str,
+        first_open: int,
+        last_open: int,
+        rows: List[list],
+        report: Optional[Callable[[int], None]] = None,
+    ) -> bool:
+        """Append klines opening in [first_open, last_open] to `rows`, newest page first.
+
+        Returns True when Binance has no candles older than the ones fetched (the listing).
+        """
+        step = interval_to_ms(interval)
+        curr_end = last_open + step - 1
+        while curr_end >= first_open:
+            want = min((curr_end - first_open) // step + 1, _KLINE_PAGE)
+            page = self._get("/fapi/v1/klines", {
+                "symbol": market, "interval": interval, "endTime": curr_end, "limit": want,
+            })
+            if not page:
+                return True
+            rows.extend(page)
+            if report is not None:
+                report(len(rows))
+            curr_end = min(int(r[0]) for r in page) - 1
+            if len(page) < want:  # reached the listing date
+                return True
+        return False
+
+    @staticmethod
+    def _kline_frame(rows: List[list], first_open: int, last_open: int) -> pd.DataFrame:
+        """Raw kline rows as CandleCache columns, limited to open times first_open..last_open."""
+        if not rows:
+            return CandleCache.empty()
+        df = pd.DataFrame(
+            [(int(r[0]), float(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]),
+              float(r[7]), int(r[8]), float(r[9]), float(r[10])) for r in rows],
+            columns=CandleCache.COLUMNS,
+        )
+        df = df[(df["time"] >= first_open) & (df["time"] <= last_open)]
+        return df.drop_duplicates("time").sort_values("time").reset_index(drop=True)
 
 
 def funding_known_at(close_ms: np.ndarray, events: pd.DataFrame) -> np.ndarray:

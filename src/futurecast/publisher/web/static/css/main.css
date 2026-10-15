@@ -653,6 +653,22 @@ a {
   color: var(--warn);
 }
 
+.progress-track {
+  display: inline-block;
+  width: 120px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--warn);
+  transition: width 0.4s ease;
+}
+
 .training-tag::before {
   content: "";
   width: 9px;

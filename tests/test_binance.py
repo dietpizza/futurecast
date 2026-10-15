@@ -3,10 +3,12 @@
 from typing import List
 
 import httpx
+import pandas as pd
 import pytest
 
 from futurecast.ingestion import binance
 from futurecast.ingestion.binance import BinanceMarket, BinancePublicClient, binance_candidates
+from futurecast.ingestion.cache import CandleCache
 
 STEP = 300_000  # 5m
 NOW = 1_700_000_000_000 // STEP * STEP + 120_000  # two minutes into a 5m candle
@@ -27,8 +29,8 @@ def _kline(open_ms: int) -> list:
             "1000", 42, "6", "600", "0"]
 
 
-def _client(handler) -> BinancePublicClient:
-    client = BinancePublicClient()
+def _client(handler, cache: CandleCache | None = None) -> BinancePublicClient:
+    client = BinancePublicClient(candle_cache=cache)
     client._client = httpx.Client(base_url=binance.BINANCE_FAPI_URL, transport=httpx.MockTransport(handler))
     return client
 
@@ -41,8 +43,9 @@ def no_sleep(monkeypatch):
 class FakeBinance:
     """Serves exchangeInfo and a 5m kline series that runs up to the still-forming candle."""
 
-    def __init__(self, first_open_ms: int = NOW // STEP * STEP - 4000 * STEP) -> None:
+    def __init__(self, first_open_ms: int = NOW // STEP * STEP - 4000 * STEP, now_ms: int = NOW) -> None:
         self.first_open_ms = first_open_ms
+        self.now_ms = now_ms
         self.calls: List[httpx.Request] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
@@ -52,7 +55,7 @@ class FakeBinance:
         if request.url.path == "/fapi/v1/klines":
             end = int(request.url.params["endTime"])
             limit = int(request.url.params["limit"])
-            forming = NOW // STEP * STEP
+            forming = self.now_ms // STEP * STEP
             opens = [t for t in range(self.first_open_ms, forming + STEP, STEP) if t <= end][-limit:]
             return httpx.Response(200, json=[_kline(t) for t in opens])
         if request.url.path == "/fapi/v2/ticker/price":
@@ -110,6 +113,69 @@ def test_candle_history_stops_at_listing_date() -> None:
 
     assert len(df) == 300  # every closed candle since listing, not the forming one
     assert fake.count("/fapi/v1/klines") == 1
+
+
+def test_cached_candles_are_not_downloaded_again(tmp_path) -> None:
+    cache = CandleCache(tmp_path / "candles")
+    fake = FakeBinance()
+    first, _ = _client(fake, cache).fetch_candle_history("B-SOL_USDT", "5m", bars=2500, end_time_ms=NOW)
+    assert fake.count("/fapi/v1/klines") == 3
+
+    # A new client (as each training run makes) reads the same candles from disk
+    fake = FakeBinance()
+    again, _ = _client(fake, cache).fetch_candle_history("B-SOL_USDT", "5m", bars=2500, end_time_ms=NOW)
+    assert fake.count("/fapi/v1/klines") == 0
+    pd.testing.assert_frame_equal(again, first)
+
+    # Ten candles later only those ten are fetched, in one request
+    fake = FakeBinance(now_ms=NOW + 10 * STEP)
+    later, _ = _client(fake, cache).fetch_candle_history("B-SOL_USDT", "5m", bars=2500, end_time_ms=NOW + 10 * STEP)
+    assert [int(r.url.params["limit"]) for r in fake.calls if r.url.path == "/fapi/v1/klines"] == [10]
+    assert len(later) == 2500
+    assert later["timestamp"].iloc[-1].value // 1_000_000 == (NOW // STEP + 9) * STEP
+
+    # Deeper history fetches only the older stretch (the cache already holds 2,510)
+    fake = FakeBinance(now_ms=NOW + 10 * STEP)
+    deeper, _ = _client(fake, cache).fetch_candle_history("B-SOL_USDT", "5m", bars=3000, end_time_ms=NOW + 10 * STEP)
+    assert [int(r.url.params["limit"]) for r in fake.calls if r.url.path == "/fapi/v1/klines"] == [490]
+    assert len(deeper) == 3000 and deeper["timestamp"].is_unique
+    pd.testing.assert_frame_equal(deeper.tail(2500).reset_index(drop=True), later)
+
+
+def test_cache_remembers_the_listing_date(tmp_path) -> None:
+    cache = CandleCache(tmp_path / "candles")
+    listed = NOW // STEP * STEP - 300 * STEP
+    _client(FakeBinance(first_open_ms=listed), cache).fetch_candle_history("B-SOL_USDT", "5m", bars=2000, end_time_ms=NOW)
+
+    fake = FakeBinance(first_open_ms=listed)
+    df, _ = _client(fake, cache).fetch_candle_history("B-SOL_USDT", "5m", bars=2000, end_time_ms=NOW)
+    assert len(df) == 300
+    assert fake.count("/fapi/v1/klines") == 0  # nothing older exists, so nothing is asked for
+
+
+def test_interrupted_download_keeps_what_it_fetched(tmp_path) -> None:
+    cache = CandleCache(tmp_path / "candles")
+    fake = FakeBinance()
+
+    def flaky(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/fapi/v1/klines" and fake.count("/fapi/v1/klines") >= 2:
+            return httpx.Response(400)
+        return fake(request)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        _client(flaky, cache).fetch_candle_history("B-SOL_USDT", "5m", bars=2500, end_time_ms=NOW)
+
+    fake = FakeBinance()
+    df, _ = _client(fake, cache).fetch_candle_history("B-SOL_USDT", "5m", bars=2500, end_time_ms=NOW)
+    assert len(df) == 2500
+    assert [int(r.url.params["limit"]) for r in fake.calls if r.url.path == "/fapi/v1/klines"] == [500]
+
+
+def test_download_progress_counts_candles(tmp_path) -> None:
+    seen = []
+    _client(FakeBinance(), CandleCache(tmp_path / "candles")).fetch_candle_history(
+        "B-SOL_USDT", "5m", bars=2500, end_time_ms=NOW, progress=lambda done, total: seen.append((done, total)))
+    assert seen == [(1000, 2500), (2000, 2500), (2500, 2500)]
 
 
 def test_candle_history_without_binance_market() -> None:
