@@ -1,16 +1,24 @@
-/* Plain-English glossary (collapsible footer) */
+/* Plain-English glossary: a bar docked to the bottom of the window that opens upward */
 
 .plain-english-glossary {
-  max-width: var(--page-w);
-  margin: 8px auto 48px;
-  padding: 0 24px;
+  position: sticky;
+  bottom: 0;
+  z-index: 40;
+  background: var(--header-bg);
+  backdrop-filter: saturate(180%) blur(8px);
+  -webkit-backdrop-filter: saturate(180%) blur(8px);
+  border-top: 1px solid var(--border);
+}
+
+.plain-english-glossary:has(.glossary-details[open]) {
+  background: var(--surface);
+  box-shadow: 0 -8px 24px rgba(16, 24, 40, 0.1);
 }
 
 .glossary-details {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  box-shadow: var(--shadow-sm);
+  max-width: var(--page-w);
+  margin: 0 auto;
+  padding: 0 24px;
 }
 
 .glossary-summary {
@@ -18,29 +26,30 @@
   align-items: baseline;
   flex-wrap: wrap;
   gap: 4px 12px;
-  padding: 14px 20px 14px 44px;
+  padding: 12px 0 12px 22px;
   position: relative;
   cursor: pointer;
   list-style: none;
-  border-radius: var(--radius);
+  user-select: none;
 }
 
 .glossary-summary::-webkit-details-marker {
   display: none;
 }
 
+/* Chevron points up while closed (the sheet opens upward) and down while open */
 .glossary-summary::before {
   content: "";
   position: absolute;
-  left: 20px;
+  left: 2px;
   top: 50%;
   width: 7px;
   height: 7px;
-  margin-top: -5px;
+  margin-top: -2px;
   border-right: 1.75px solid var(--text-muted);
   border-bottom: 1.75px solid var(--text-muted);
-  transform: rotate(-45deg);
-  transition: transform 0.2s;
+  transform: rotate(-135deg);
+  transition: transform 0.2s, margin-top 0.2s;
 }
 
 .glossary-details[open] .glossary-summary::before {
@@ -48,13 +57,18 @@
   margin-top: -6px;
 }
 
-.glossary-summary:hover {
-  background: var(--surface-hover);
+.glossary-summary:hover .glossary-title {
+  color: var(--accent-text);
+}
+
+.glossary-summary:hover::before {
+  border-color: var(--accent-text);
 }
 
 .glossary-title {
   font-size: 14px;
   font-weight: 600;
+  transition: color 0.15s;
 }
 
 .glossary-subtitle {
@@ -66,7 +80,11 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 28px;
-  padding: 8px 20px 24px;
+  max-height: min(60vh, 560px);
+  max-height: min(60dvh, 560px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 0 20px;
   border-top: 1px solid var(--border);
 }
 
@@ -125,5 +143,6 @@
 }
 
 @media (max-width: 720px) {
-  .plain-english-glossary { padding: 0 16px; }
+  .glossary-details { padding: 0 16px; }
+  .glossary-subtitle { display: none; }
 }

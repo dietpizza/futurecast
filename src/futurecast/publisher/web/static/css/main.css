@@ -40,6 +40,8 @@
   --header-bg: rgba(255, 255, 255, 0.92);
   --backdrop: rgba(17, 24, 39, 0.28);
   --focus-ring: rgba(37, 99, 235, 0.15);
+  --brand-from: #2563eb;
+  --brand-to: #7c3aed;
 
   /* Open watchlist card: accent-tinted versions of the tokens above (follow the theme) */
   --open-bg: color-mix(in srgb, var(--accent) 5%, var(--surface));
@@ -109,6 +111,8 @@
   --header-bg: rgba(22, 25, 31, 0.88);
   --backdrop: rgba(0, 0, 0, 0.55);
   --focus-ring: rgba(96, 165, 250, 0.25);
+  --brand-from: #60a5fa;
+  --brand-to: #a78bfa;
 
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
@@ -135,6 +139,10 @@ body {
   font-size: 14px;
   line-height: 1.45;
   min-height: 100vh;
+  min-height: 100dvh;
+  /* Column layout lets the page grow and keeps the cheat sheet footer at the bottom */
+  display: flex;
+  flex-direction: column;
   -webkit-font-smoothing: antialiased;
 }
 
@@ -318,18 +326,48 @@ a {
 }
 
 .brand-mark {
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background:
-    linear-gradient(135deg, transparent 50%, rgba(255, 255, 255, 0.35) 50%),
-    var(--accent);
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 45%, #7c3aed 100%);
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+/* Solid line = the past, dashed line = the forecast, dot = where it lands */
+.brand-mark svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: #fff;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.brand-mark .brand-forecast {
+  stroke-dasharray: 1.5 2.5;
+  opacity: 0.85;
+}
+
+.brand-mark circle {
+  fill: #fff;
+  stroke: none;
 }
 
 .brand-name {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
-  letter-spacing: -0.2px;
+  letter-spacing: -0.5px;
+  line-height: 1;
+}
+
+.brand-cast {
+  background: linear-gradient(90deg, var(--brand-from), var(--brand-to));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .header-actions {
@@ -377,9 +415,11 @@ a {
 /* ───────── Page & toolbar ───────── */
 
 .page {
+  flex: 1 0 auto;
+  width: 100%;
   max-width: var(--page-w);
   margin: 0 auto;
-  padding: 24px 24px 16px;
+  padding: 24px 24px 32px;
 }
 
 .toolbar {

@@ -88,7 +88,7 @@ def create_app(
             pass
 
     app = FastAPI(
-        title="futurecast Real-Time Forecaster",
+        title="FutureCast Real-Time Forecaster",
         description="Multi-Model Residual Alpha Forecasting Engine",
         lifespan=lifespan,
         docs_url=None,
@@ -232,6 +232,6 @@ def run_web_server(
         persistence_path=persistence_path,
     )
     shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host  # a wildcard bind is not a browsable address
-    print(f"\n⚡ futurecast Web UI running at: http://{shown}:{port} (listening on {host})")
+    print(f"\n⚡ FutureCast Web UI running at: http://{shown}:{port} (listening on {host})")
     print(f"🛡️  Safety: STRICTLY ZERO ORDER EXECUTION\n")
     uvicorn.run(app, host=host, port=port, log_level="warning")

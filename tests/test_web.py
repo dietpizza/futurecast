@@ -21,7 +21,7 @@ def test_web_index_page(test_app):
     with TestClient(test_app) as client:
         response = client.get("/")
         assert response.status_code == 200
-        assert "futurecast" in response.text
+        assert "FutureCast" in response.text
         assert "models-table" in response.text
         # Verify tooltips and beginner-friendly descriptions
         assert "global-tooltip" in response.text
