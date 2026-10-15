@@ -23,7 +23,7 @@ def compute_residual_alpha_target(
 ) -> pd.Series:
     """Compute 15-minute Residual Alpha target:
     
-    y_t = R_{DOGE, t -> t+15} - beta_{t, 1440} * R_{BTC, t -> t+15}
+    y_t = R_{target, t -> t+15} - beta_{t, 1440} * R_{benchmark, t -> t+15}
     
     CRITICAL: beta_{t, 1440} is point-in-time at time t (backward-looking).
     Only the forward returns look ahead by exactly 15 minutes.

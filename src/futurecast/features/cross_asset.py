@@ -85,12 +85,12 @@ def compute_cross_asset_features(
     # Rolling Beta to ETH (1440m)
     out["beta_eth_1440m"] = compute_rolling_beta(t_ret1, e_ret1, window=1440, col_name="beta_eth_1440m")
 
-    # 3. Beta Residual Momentum (15m): R_DOGE,15 - beta_1440 * R_BTC,15
+    # 3. Beta residual momentum (15 candles): R_target,15 - beta_1440 * R_benchmark,15
     out["beta_residual_momentum_15m"] = (
         out[f"{target_symbol}_ret_15m"] - out["beta_btc_1440m"] * out[f"{primary_benchmark}_ret_15m"]
     )
 
-    # 4. Cross-Asset Return Spreads
+    # 4. Return spreads to both benchmarks ("doge" in the names means the target coin)
     out["doge_btc_ret_spread_15m"] = out[f"{target_symbol}_ret_15m"] - out[f"{primary_benchmark}_ret_15m"]
     out["doge_eth_ret_spread_15m"] = out[f"{target_symbol}_ret_15m"] - out[f"{secondary_benchmark}_ret_15m"]
 

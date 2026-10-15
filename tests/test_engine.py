@@ -3,7 +3,6 @@
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import numpy as np
-import pandas as pd
 from futurecast.config import load_config
 from futurecast.engine.calibration import SignalCalibrator
 from futurecast.engine.drift import DriftMonitor

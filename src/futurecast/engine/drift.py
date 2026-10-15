@@ -7,7 +7,6 @@ from datetime import datetime
 import logging
 from typing import NamedTuple, Optional
 import numpy as np
-from scipy.stats import spearmanr
 
 logger = logging.getLogger(__name__)
 
@@ -92,28 +91,3 @@ class DriftMonitor:
             self.completed_history.append(last_record)
 
         return last_record
-
-    def get_rolling_metrics(self, window: int = 120) -> dict[str, float]:
-        """Compute rolling Spearman IC, RMSE, and hit rate over completed forecasts."""
-        if len(self.completed_history) < 5:
-            return {"rolling_ic": 0.0, "rolling_rmse": 0.0, "sample_count": len(self.completed_history)}
-
-        recent = list(self.completed_history)[-window:]
-        preds = np.array([r.predicted for r in recent])
-        reals = np.array([r.realized for r in recent])
-
-        ic, _ = spearmanr(preds, reals)
-        rmse = float(np.sqrt(np.mean((preds - reals) ** 2)))
-        hit_rate = float(np.mean(np.sign(preds) == np.sign(reals)))
-
-        res = {
-            "rolling_ic": float(ic) if not np.isnan(ic) else 0.0,
-            "rolling_rmse": rmse,
-            "hit_rate": hit_rate,
-            "sample_count": len(recent),
-        }
-
-        if res["rolling_ic"] < -0.05:
-            logger.warning(f"MODEL DRIFT WARNING: Rolling IC dropped to {res['rolling_ic']:.3f}")
-
-        return res

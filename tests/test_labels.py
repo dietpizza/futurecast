@@ -1,7 +1,6 @@
 """Tests for residual alpha target generation."""
 
 from datetime import datetime, timezone
-import numpy as np
 from futurecast.ingestion.synthetic import generate_synthetic_data
 from futurecast.ingestion.storage import align_cross_asset_data
 from futurecast.features.pipeline import FeaturePipeline

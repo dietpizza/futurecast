@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import logging
 from typing import Any, Dict, Optional, Union, TYPE_CHECKING
 import numpy as np
@@ -12,13 +11,11 @@ from futurecast.config import AppConfig
 from futurecast.engine.calibration import SignalCalibrator
 from futurecast.engine.drift import DriftMonitor
 from futurecast.features.pipeline import FeaturePipeline
-from futurecast.features.shitcoin import is_high_beta_shitcoin, evaluate_shitcoin_microstructure
 from futurecast.ingestion.factory import get_symbol_sector
-from futurecast.schema import ForecastEvent, SignalState
+from futurecast.schema import ForecastEvent
 
 if TYPE_CHECKING:
     from futurecast.models.ensemble import LightGBMAlphaModel, MultiModelEnsemble
-    from futurecast.publisher.broadcaster import SignalBroadcaster
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +45,8 @@ class PureForecastEngine:
         self.feature_pipeline = feature_pipeline
         if broadcaster is None:
             from futurecast.publisher.broadcaster import SignalBroadcaster
-            self.broadcaster = SignalBroadcaster(output_dir=config.forecasting.output_dir)
+            self.broadcaster = SignalBroadcaster(output_dir=config.forecasting.output_dir,
+                                                 max_mb=config.forecasting.log_limit_mb)
         else:
             self.broadcaster = broadcaster
         self.calibrator = SignalCalibrator(
@@ -86,7 +84,7 @@ class PureForecastEngine:
         aligned_df_slice: pd.DataFrame,
         orderbook_depth: Optional[Dict[str, Any]] = None,
     ) -> Optional[ForecastEvent]:
-        """Ingest new aligned 1-minute bars and generate forecast on the latest closed bar."""
+        """Ingest newly closed aligned candles and forecast on the latest one."""
         if aligned_df_slice.empty:
             return None
 
@@ -144,36 +142,12 @@ class PureForecastEngine:
 
         # Microstructure context
         ctx = {}
-        for col in ["volume_zscore_60m", "relative_volume_ratio_15m", "funding_rate_bps", "oi_delta_15m_pct"]:
+        for col in ["volume_zscore_60m", "relative_volume_ratio_15m", "funding_rate_bps"]:
             if col in latest_features.columns:
                 val = latest_features[col].iloc[0]
                 ctx[col] = float(val) if not np.isnan(val) else 0.0
 
         sector = get_symbol_sector(target_symbol)
-
-        # High-Beta Shitcoin Strategy (strictly only for shitcoins; big vol coins unaffected)
-        if is_high_beta_shitcoin(target_symbol, sector):
-            shitcoin_metrics = evaluate_shitcoin_microstructure(
-                df=self._bar_buffer,
-                target_symbol=target_symbol,
-                sector=sector,
-                leader_symbol=bench_symbol,
-            )
-            ctx.update(shitcoin_metrics)
-            alpha_boost = shitcoin_metrics.get("shitcoin_alpha_boost_bps", 0.0)
-            if alpha_boost != 0.0:
-                expected_bps = round(expected_bps + alpha_boost, 2)
-                # Directional confirmation
-                if expected_bps > 15.0 and z_score > 0.8:
-                    signal_state = SignalState.BULLISH_RESIDUAL
-                elif expected_bps < -15.0 and z_score < -0.8:
-                    signal_state = SignalState.BEARISH_RESIDUAL
-            if shitcoin_metrics.get("shitcoin_regime") == "DORMANT_CHOP":
-                expected_bps = round(expected_bps * 0.5, 2)
-                if abs(expected_bps) < 12.0:
-                    signal_state = SignalState.NEUTRAL
-        else:
-            ctx["is_shitcoin_strategy_active"] = False
 
         event = ForecastEvent(
             timestamp=latest_timestamp,

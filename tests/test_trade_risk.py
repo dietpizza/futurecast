@@ -116,3 +116,42 @@ def test_save_load_roundtrip(tmp_path, fast_config):
     b = loaded.predict_latest(features, close)["15m"]
     assert a["long"]["worst_move_pct"] == pytest.approx(b["long"]["worst_move_pct"])
     assert a["short"]["score"] == b["short"]["score"]
+
+
+def _regime_switching_market(n, seed):
+    """Volatility jumps between calm and stormy stretches; features carry no hint of it."""
+    rng = np.random.default_rng(seed)
+    stormy = np.zeros(n, dtype=bool)
+    for t in range(1, n):
+        stormy[t] = stormy[t - 1] if rng.random() < 0.995 else not stormy[t - 1]
+    vol = np.where(stormy, 0.004, 0.001)
+    close = 100 * np.exp(np.cumsum(rng.normal(0, vol)))
+    wiggle = np.abs(rng.normal(0, 0.3 * vol))
+    idx = pd.date_range("2026-01-01", periods=n, freq="1min", tz="UTC")
+    features = pd.DataFrame({"noise": rng.normal(0, 1, n), "noise2": rng.normal(0, 1, n)}, index=idx)
+    return (features, pd.Series(close, idx), pd.Series(close * (1 + wiggle), idx),
+            pd.Series(close * (1 - wiggle), idx))
+
+
+def test_worst_move_holds_95_in_stormy_stretches_too():
+    features, close, high, low = _regime_switching_market(12_000, seed=2)
+    model = TradeRiskModel(TradeRiskConfig(horizons={"15m": 15}, max_rounds=100))
+    model.fit(features, close, high, low)
+
+    m = model.sides["15m"]["long"].metrics
+    stormy, calm = m["coverage_by_regime"]["stormy"], m["coverage_by_regime"]["calm"]
+    assert stormy["n_independent"] >= 30 and calm["n_independent"] >= 30, m
+    # Trailing volatility lags when a storm starts: one overall multiplier lets too many moves through
+    assert stormy["single_scale"] < 0.91, m
+    # A multiplier per regime brings the stormy stretches back to ~95%, and gives back the calm surplus
+    assert stormy["model"] >= stormy["single_scale"] + 0.03 and stormy["model"] >= 0.92, m
+    assert calm["single_scale"] > calm["model"], m
+    assert m["scale"][2] > m["scale"][0]  # more margin when stormy than when calm
+
+    out = model.predict_latest(features, close)["15m"]
+    assert out["regime"] in ("calm", "normal", "stormy") and 0.0 <= out["storm_chance"] <= 1.0
+    # Serving uses the current regime's multiplier
+    side = model.sides["15m"]["long"]
+    X = features.reindex(columns=model.feature_names).iloc[[-1]].assign(risk_log_horizon_vol=np.log(0.01))
+    calm_bound, storm_bound = (side.predict(X, 0.01, k)["model_worst_move"] for k in (0, 2))
+    assert storm_bound / calm_bound == pytest.approx(side.scale[2] / side.scale[0])

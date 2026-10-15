@@ -3,7 +3,7 @@
 from futurecast.ingestion.synthetic import generate_synthetic_data
 from futurecast.ingestion.binance import BinanceMarket, BinancePublicClient, binance_candidates
 from futurecast.ingestion.storage import align_cross_asset_data
-from futurecast.ingestion.cache import DataCache
+from futurecast.ingestion.cache import CandleCache
 from futurecast.ingestion.factory import (
     detect_exchange,
     resolve_benchmarks,
@@ -20,7 +20,7 @@ __all__ = [
     "binance_candidates",
     "generate_synthetic_data",
     "align_cross_asset_data",
-    "DataCache",
+    "CandleCache",
     "detect_exchange",
     "resolve_benchmarks",
     "sanitize_symbol_for_filename",

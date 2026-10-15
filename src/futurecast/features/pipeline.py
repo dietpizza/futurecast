@@ -4,10 +4,8 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import Dict, Tuple
 import numpy as np
 import pandas as pd
-from statsmodels.tsa.stattools import adfuller
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -21,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class FeaturePipeline:
-    """Assembles all 35 features and verifies strict stationarity and zero leakage."""
+    """Builds every model feature from an aligned candle matrix (target plus two benchmarks)."""
 
     def __init__(
         self,
@@ -36,10 +34,13 @@ class FeaturePipeline:
         self.secondary_benchmark = secondary_benchmark
 
     def generate_features(self, aligned_df: pd.DataFrame) -> pd.DataFrame:
-        """Compute all 35 features from the aligned continuous 1-minute OHLCV matrix."""
+        """All features for every candle, each computed from that candle and earlier ones only.
+
+        Window settings count candles of whatever interval `aligned_df` holds (see FeaturesConfig).
+        """
         logger.info(f"Generating features for {len(aligned_df)} aligned bars...")
 
-        # Group A: Cross-Asset Lead-Lag & Dynamics (10 features)
+        # Cross-asset returns, betas, spreads and RSI
         grp_a = compute_cross_asset_features(
             aligned_df,
             target_symbol=self.target_symbol,
@@ -50,7 +51,7 @@ class FeaturePipeline:
             rsi_period=self.config.cross_asset.rsi_period,
         )
 
-        # Group B: Volume & Volatility Microstructure (12 features)
+        # Volume, volatility and taker order flow
         grp_b = compute_microstructure_features(
             aligned_df,
             target_symbol=self.target_symbol,
@@ -60,17 +61,15 @@ class FeaturePipeline:
             rvr_window=self.config.microstructure.rvr_window_min,
         )
 
-        # Group C: Derivative Flow & Positioning (8 features)
+        # Settled funding rates
         grp_c = compute_derivative_features(
             aligned_df,
             target_symbol=self.target_symbol,
             benchmark_symbol=self.primary_benchmark,
             funding_window_min=self.config.derivatives.funding_ema_window_min,
-            oi_delta_windows=self.config.derivatives.oi_delta_windows_min,
-            divergence_window=self.config.derivatives.oi_divergence_window_min,
         )
 
-        # Group D: Technical & Price Geometry (5 features)
+        # Price geometry: distance to recent extremes, VWAP basis, candle shape
         grp_d = compute_technical_features(
             aligned_df,
             target_symbol=self.target_symbol,
@@ -83,47 +82,7 @@ class FeaturePipeline:
 
         # Guarantee strict backward-looking alignment:
         # Every feature at timestamp t is strictly computed up to bar t.
-        # Clean infinities and drop warmup NaNs (longest rolling window is 1440 min = 1 day)
+        # Infinities become NaN; warm-up NaNs stay (the boosters handle missing values)
         features = features.replace([np.inf, -np.inf], np.nan)
         logger.info(f"Created {features.shape[1]} raw candidate features.")
         return features
-
-    def run_stationarity_audit(
-        self,
-        features: pd.DataFrame,
-        sample_size: int = 10000,
-        significance_threshold: float = 0.05,
-    ) -> Dict[str, dict]:
-        """Run Augmented Dickey-Fuller (ADF) test on each feature to verify stationarity."""
-        audit_results = {}
-        # Use recent valid slice to test stationarity
-        valid_df = features.dropna().tail(sample_size)
-
-        for col in valid_df.columns:
-            series = valid_df[col].values
-            if np.all(series == series[0]) or np.isnan(series).any():
-                audit_results[col] = {
-                    "adf_stat": 0.0,
-                    "p_value": 1.0,
-                    "is_stationary": False,
-                    "note": "constant or nan",
-                }
-                continue
-
-            try:
-                adf_stat, p_val, _, _, _, _ = adfuller(series, maxlag=10, autolag="AIC")
-                audit_results[col] = {
-                    "adf_stat": float(adf_stat),
-                    "p_value": float(p_val),
-                    "is_stationary": bool(p_val < significance_threshold),
-                    "note": "OK" if p_val < significance_threshold else "Non-stationary candidate",
-                }
-            except Exception as err:
-                audit_results[col] = {
-                    "adf_stat": 0.0,
-                    "p_value": 1.0,
-                    "is_stationary": False,
-                    "note": f"Error: {err}",
-                }
-
-        return audit_results

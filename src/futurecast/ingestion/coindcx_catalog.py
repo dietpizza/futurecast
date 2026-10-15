@@ -13,7 +13,6 @@ import time
 from typing import Any, Dict, List, Optional
 import httpx
 
-from futurecast.features.shitcoin import is_high_beta_shitcoin
 from futurecast.ingestion.binance import BinancePublicClient
 from futurecast.ingestion.factory import extract_base_and_quote, get_symbol_sector, resolve_benchmarks
 
@@ -145,9 +144,6 @@ def get_all_coindcx_instruments() -> List[Dict[str, Any]]:
 
     raw_symbols = _binance_pairs()
 
-    # Build lookup of curated registry items
-    curated_map = {item["symbol"]: item for item in COINDCX_FUTURES_REGISTRY}
-
     enriched: List[Dict[str, Any]] = []
     seen_symbols = set()
 
@@ -160,7 +156,6 @@ def get_all_coindcx_instruments() -> List[Dict[str, Any]]:
 
         base, quote = extract_base_and_quote(sym)
         sector = get_symbol_sector(sym)
-        is_shitcoin = is_high_beta_shitcoin(sym, sector)
         benchmarks = resolve_benchmarks(sym, "coindcx", sector_aware=True)
         coindcx_url = f"https://coindcx.com/futures/{sym}" if sym.startswith("B-") else f"https://coindcx.com/trade/{sym}"
 
@@ -170,7 +165,6 @@ def get_all_coindcx_instruments() -> List[Dict[str, Any]]:
             "quote": quote,
             "name": item["name"],
             "sector": sector,
-            "is_shitcoin": is_shitcoin,
             "benchmarks": benchmarks,
             "description": item["description"],
             "coindcx_url": coindcx_url,
@@ -185,7 +179,6 @@ def get_all_coindcx_instruments() -> List[Dict[str, Any]]:
 
         base, quote = extract_base_and_quote(s_clean)
         sector = get_symbol_sector(s_clean)
-        is_shitcoin = is_high_beta_shitcoin(s_clean, sector)
         benchmarks = resolve_benchmarks(s_clean, "coindcx", sector_aware=True)
         name = base
         description = f"CoinDCX {quote}-Margined Perpetual Contract for {base}."
@@ -197,7 +190,6 @@ def get_all_coindcx_instruments() -> List[Dict[str, Any]]:
             "quote": quote,
             "name": name,
             "sector": sector,
-            "is_shitcoin": is_shitcoin,
             "benchmarks": benchmarks,
             "description": description,
             "coindcx_url": coindcx_url,
@@ -280,14 +272,12 @@ def get_coindcx_futures_catalog(
 
         base, quote = extract_base_and_quote(candidate_sym)
         c_sector = get_symbol_sector(candidate_sym)
-        c_shit = is_high_beta_shitcoin(candidate_sym, c_sector)
         results.append({
             "symbol": candidate_sym,
             "base": base,
             "quote": quote,
             "name": base,
             "sector": c_sector,
-            "is_shitcoin": c_shit,
             "benchmarks": resolve_benchmarks(candidate_sym, "coindcx", sector_aware=True),
             "description": f"CoinDCX {quote}-Margined Perpetual Contract for {base}.",
             "coindcx_url": f"https://coindcx.com/futures/{candidate_sym}",

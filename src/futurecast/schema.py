@@ -14,33 +14,6 @@ class SignalState(str, Enum):
     NEUTRAL = "NEUTRAL"
 
 
-class KlineBar(BaseModel):
-    timestamp: datetime
-    symbol: str
-    open: float
-    high: float
-    low: float
-    close: float
-    volume: float
-    quote_volume: float
-    count: int
-    taker_buy_volume: float
-    taker_buy_quote_volume: float
-
-
-class FundingRateRecord(BaseModel):
-    timestamp: datetime
-    symbol: str
-    funding_rate: float
-
-
-class OpenInterestRecord(BaseModel):
-    timestamp: datetime
-    symbol: str
-    open_interest: float
-    open_interest_usd: float
-
-
 class ModelForecastItem(BaseModel):
     model_name: str
     expected_residual_alpha_bps: float
@@ -78,25 +51,3 @@ class ForecastEvent(BaseModel):
     model_predictions: Dict[str, ModelForecastItem] = Field(default_factory=dict)
     cross_verification: Optional[CrossVerificationSummary] = None
     sector: Optional[str] = None
-
-
-class ValidationFoldMetric(BaseModel):
-    fold: int
-    train_start: datetime
-    train_end: datetime
-    test_start: datetime
-    test_end: datetime
-    spearman_ic: float
-    rmse: float
-    mae: float
-    n_train_samples: int
-    n_test_samples: int
-
-
-class ValidationSummary(BaseModel):
-    mean_ic: float
-    std_ic: float
-    ic_ir: float
-    mean_rmse: float
-    mean_mae: float
-    fold_metrics: list[ValidationFoldMetric]

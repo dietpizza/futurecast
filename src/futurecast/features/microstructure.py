@@ -43,7 +43,6 @@ def compute_microstructure_features(
     out = pd.DataFrame(index=df.index)
 
     t_vol = df[f"{target_symbol}_volume"]
-    b_vol = df[f"{benchmark_symbol}_volume"]
 
     t_high = df[f"{target_symbol}_high"]
     t_low = df[f"{target_symbol}_low"]
@@ -55,22 +54,22 @@ def compute_microstructure_features(
         out[f"volume_zscore_{w}m"] = compute_volume_zscore(t_vol, window=w)
 
     # 2. Relative Volume Ratio (RVR) normalized by quote volume
-    t_quote = df[f"{target_symbol}_quote_volume"] if f"{target_symbol}_quote_volume" in df.columns else (t_vol * t_close)
-    b_quote = df[f"{benchmark_symbol}_quote_volume"] if f"{benchmark_symbol}_quote_volume" in df.columns else (b_vol * b_close)
+    t_quote = df[f"{target_symbol}_quote_volume"]
+    b_quote = df[f"{benchmark_symbol}_quote_volume"]
     raw_ratio = t_quote / b_quote.replace(0.0, np.nan)
     rolling_baseline = raw_ratio.rolling(rvr_window * 4, min_periods=5).mean()
     norm_rvr = (raw_ratio / rolling_baseline.replace(0.0, np.nan)).fillna(1.0)
     out[f"relative_volume_ratio_{rvr_window}m"] = norm_rvr.rolling(rvr_window, min_periods=5).mean().clip(0.05, 25.0).fillna(1.0)
 
-    # 3. Parkinson Realized Volatility for DOGE (15m, 60m, 240m)
+    # 3. Parkinson high-low volatility of the target over each window
     for w in parkinson_windows:
         out[f"parkinson_vol_{w}m"] = compute_parkinson_volatility(t_high, t_low, window=w)
 
-    # Parkinson RV for BTC (60m)
+    # Parkinson volatility of the primary benchmark (60 candles)
     btc_parkinson_60 = compute_parkinson_volatility(b_high, b_low, window=60)
     out["parkinson_vol_btc_60m"] = btc_parkinson_60
 
-    # 4. Realized Volatility Ratio (DOGE 60m / BTC 60m)
+    # 4. Volatility ratio, target / primary benchmark (60 candles)
     out["realized_vol_ratio_60m"] = (out["parkinson_vol_60m"] / btc_parkinson_60.replace(0.0, np.nan)).fillna(1.0)
 
     # 5. Order Flow Imbalance (OFI Proxy) from taker volumes

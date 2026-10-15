@@ -131,7 +131,7 @@
             </div>
             <div class="glossary-item">
               <dt><span class="term-badge">Edge</span> Proven edge</dt>
-              <dd>The probabilities scored better than simply quoting the usual win rate, on <em>newer</em> history the models never saw, with 90% confidence. Without it the page shows the usual (base) rate instead.</dd>
+              <dd>The probabilities scored better than the <strong>volatility-only odds</strong> on <em>newer</em> history the models never saw, with 90% confidence, and the long / short split itself predicted outcomes. Volatility-only odds are what someone with no view on direction would quote: a hidden Markov model forecasts how volatile the coin will be, and an absorbing Markov chain turns that into the chance of touching the take-profit first. Without an edge the page shows those odds.</dd>
             </div>
             <div class="glossary-item">
               <dt><span class="term-badge">bps</span> Basis points</dt>
@@ -171,7 +171,7 @@
             </div>
             <div class="glossary-item">
               <dt><span class="term-badge">Risk</span> Long / short risk</dt>
-              <dd>Trained models estimate how far price could move against each side in the worst 5% of cases. The 0–100 score ranks that against the coin's recent history; "Max" is the highest leverage that keeps liquidation beyond it.</dd>
+              <dd>Trained models estimate how far price could move against each side in the worst 5% of cases, calibrated separately for calm, normal and stormy volatility so the 5% holds in rough stretches too. The 0–100 score ranks that against the coin's recent history; "Max" is the highest leverage that keeps liquidation beyond it.</dd>
             </div>
             <div class="glossary-item">
               <dt><span class="term-badge">CVD</span> Cumulative volume delta</dt>

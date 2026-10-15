@@ -1,7 +1,6 @@
 """Tests for Level-2 Orderbook Depth & Microprice Skew Analytics."""
 
 from datetime import datetime, timezone
-import pytest
 
 from futurecast.features.orderbook import compute_orderbook_metrics
 from futurecast.schema import ForecastEvent, SignalState

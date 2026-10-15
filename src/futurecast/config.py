@@ -14,31 +14,20 @@ from futurecast.paths import resolve
 
 
 class DataSourceConfig(BaseModel):
-    exchange: str = "binance"
     base_url: str = "https://fapi.binance.com"
-    klines_endpoint: str = "/fapi/v1/klines"
-    funding_endpoint: str = "/fapi/v1/fundingRate"
-    oi_endpoint: str = "/fapi/v1/openInterestHist"
     request_timeout_sec: int = 15
     max_retries: int = 3
-    rate_limit_pause_sec: float = 0.1
 
 
 class StorageConfig(BaseModel):
-    raw_dir: str = "data/raw"
-    processed_dir: str = "data/processed"
-    cache_dir: str = "cache"
+    cache_dir: str = "cache"  # downloaded candles go in <cache_dir>/candles
     use_cache: bool = True
-    format: str = "parquet"
-    compression: str = "zstd"
-    partition_cols: List[str] = Field(default_factory=lambda: ["year", "month"])
 
 
 class AssetsConfig(BaseModel):
+    # Set per coin by the stream manager for the residual-alpha engine; the defaults only serve tests
     target_asset: str = "DOGEUSDT"
     benchmark_assets: List[str] = Field(default_factory=lambda: ["BTCUSDT", "ETHUSDT"])
-    timeframe: str = "1m"
-    history_days: int = 365
     data_source: DataSourceConfig = Field(default_factory=DataSourceConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
 
@@ -53,27 +42,19 @@ class MicrostructureFeaturesConfig(BaseModel):
     volume_z_windows_min: List[int] = Field(default_factory=lambda: [60, 1440])
     rvr_window_min: int = 15
     parkinson_windows_min: List[int] = Field(default_factory=lambda: [15, 60, 240])
-    rv_ratio_window_min: int = 60
-    ofi_windows_min: List[int] = Field(default_factory=lambda: [5, 15])
 
 
 class DerivativesFeaturesConfig(BaseModel):
     funding_ema_window_min: int = 4320  # trailing funding mean, in clock minutes (3 days), not candles
-    oi_delta_windows_min: List[int] = Field(default_factory=lambda: [15, 60])
-    oi_divergence_window_min: int = 60
 
 
 class TechnicalFeaturesConfig(BaseModel):
     stochastic_extremes_window_min: int = 60
     vwap_window_min: int = 240
-    wick_ratios: bool = True
 
 
 class TargetConfig(BaseModel):
-    name: str = "residual_alpha_15m"
-    horizon_min: int = 15
-    beta_window_min: int = 1440
-    huber_delta: float = 0.001
+    horizon_min: int = 15  # residual-alpha horizon, in candles of the engine interval
 
 
 class FeaturesConfig(BaseModel):
@@ -107,6 +88,7 @@ class ForecastingConfig(BaseModel):
     zscore_window_minutes: int = 1440
     signal_threshold_z: float = 1.5
     output_dir: str = "logs/forecasts"
+    log_limit_mb: float = 32.0  # forecast logs kept in total; the oldest are deleted first
     air_gapped: bool = True
     execution_enabled: bool = False  # Hard safety rule: must always be False
 

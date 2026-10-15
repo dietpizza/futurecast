@@ -28,7 +28,6 @@ from futurecast.config import AppConfig, AssetsConfig, load_config
 from futurecast.engine.forecaster import PureForecastEngine
 from futurecast.features.orderbook import compute_orderbook_metrics
 from futurecast.features.pipeline import FeaturePipeline
-from futurecast.features.shitcoin import is_high_beta_shitcoin
 from futurecast.ingestion.binance import BinancePublicClient
 from futurecast.ingestion.cache import CandleCache
 from futurecast.ingestion.factory import (
@@ -41,6 +40,7 @@ from futurecast.ingestion.factory import (
 from futurecast.ingestion.storage import align_cross_asset_data
 from futurecast.labels.residual_alpha import compute_residual_alpha_target
 from futurecast.models.ensemble import MultiModelEnsemble
+from futurecast.models.regimes import VolatilityRegimes
 from futurecast.models.trade_probability import (
     HORIZONS_BY_INTERVAL,
     TradeModelConfig,
@@ -108,7 +108,7 @@ def _json_safe(obj: Any) -> Any:
 
 
 def _event_payload(ev: ForecastEvent) -> Dict[str, Any]:
-    """15m residual-alpha model output and order book for the latest 5m candle."""
+    """15-minute residual-alpha model output and order book for the latest 1m candle."""
     return {
         "timestamp": ev.timestamp.isoformat(),
         "benchmark_price": ev.benchmark_price,
@@ -196,15 +196,12 @@ class SymbolWorker:
             trainer=self.ensemble.models["LightGBM"],
             ensemble=self.ensemble,
             feature_pipeline=self.pipes[ENGINE_INTERVAL],
-            broadcaster=SignalBroadcaster(output_dir=self.config.forecasting.output_dir, render_terminal=False),
+            broadcaster=SignalBroadcaster(output_dir=self.config.forecasting.output_dir,
+                                          max_mb=self.config.forecasting.log_limit_mb),
             min_buffer_size=60,
             max_buffer_size=LIVE_BARS,
             bar_minutes=CANDLE_MINUTES[ENGINE_INTERVAL],
         )
-
-    @property
-    def aligned_buffer(self) -> pd.DataFrame:
-        return self.candles[ENGINE_INTERVAL]
 
     # ───────── candles ─────────
 
@@ -341,7 +338,7 @@ class SymbolWorker:
             self.engine.refresh_orderbook(metrics)
 
     def _train_residual(self, aligned: pd.DataFrame, feats: pd.DataFrame) -> Tuple[MultiModelEnsemble, Dict[str, Any]]:
-        """15m residual-alpha ensemble on 5m candles: purged 70/15/15 split, scored on the last slice."""
+        """15-minute residual-alpha ensemble on 1m candles: purged 70/15/15 split, scored on the last slice."""
         horizon = RESIDUAL_HORIZON_MINUTES // CANDLE_MINUTES[ENGINE_INTERVAL]
         target = compute_residual_alpha_target(
             aligned_df=aligned, features_df=feats, target_symbol=self.symbol,
@@ -366,11 +363,10 @@ class SymbolWorker:
             "fraction": round((step - 1 + within) / steps, 4),
         }
 
-    def train_sync(self, days: int = 0) -> Dict[str, Any]:
+    def train_sync(self) -> Dict[str, Any]:
         """Fetch real candle history, validate and fit all models, then hot-swap them in.
 
-        `days` is accepted for API compatibility; history depth is HISTORY_BARS per interval.
-        Every interval is downloaded first (status "downloading", candles already in the disk
+        History depth is HISTORY_BARS per interval. Every interval is downloaded first (status "downloading", candles already in the disk
         cache are not fetched again), then the models are fitted (status "training"), with
         `training_progress` describing the current step. Never trains on synthetic data: if
         the exchange cannot supply enough candles the coin stays untrained and the error is reported.
@@ -398,7 +394,7 @@ class SymbolWorker:
                                       "start": str(aligned.index[0]), "end": str(aligned.index[-1])}
 
             self.training_status = "training"
-            steps = sum(1 + 4 * len(HORIZONS_BY_INTERVAL[iv]) for iv in CANDLE_MINUTES) + 1
+            steps = sum(2 + 4 * len(HORIZONS_BY_INTERVAL[iv]) for iv in CANDLE_MINUTES) + 1
             done_steps = 0
 
             def advance(label: str) -> None:
@@ -413,10 +409,14 @@ class SymbolWorker:
                 advance(f"{iv} candle features")
                 feats = self.pipes[iv].generate_features(aligned)
                 ohlc = (aligned[f"{self.symbol}_close"], aligned[f"{self.symbol}_high"], aligned[f"{self.symbol}_low"])
+                advance(f"{iv} volatility regimes")
+                regimes = VolatilityRegimes.fit_on_history(ohlc[0])  # shared: both models fit the same one
                 model = TradeProbabilityModel(TradeModelConfig(interval=iv, horizons=dict(HORIZONS_BY_INTERVAL[iv])))
-                report["trade"][iv] = model.fit(feats, *ohlc, on_step=lambda h, side: advance(f"{h} {side} win odds"))
+                report["trade"][iv] = model.fit(feats, *ohlc, on_step=lambda h, side: advance(f"{h} {side} win odds"),
+                                                regimes=regimes)
                 risk = TradeRiskModel(TradeRiskConfig(interval=iv, horizons=dict(HORIZONS_BY_INTERVAL[iv])))
-                report["risk"][iv] = risk.fit(feats, *ohlc, on_step=lambda h, side: advance(f"{h} {side} worst move"))
+                report["risk"][iv] = risk.fit(feats, *ohlc, on_step=lambda h, side: advance(f"{h} {side} worst move"),
+                                              regimes=regimes)
                 trade_models[iv] = model
                 risk_models[iv] = risk
                 history[iv] = (aligned, feats)
@@ -478,7 +478,6 @@ class SymbolWorker:
                 "exchange": self.exchange.upper(),
                 "sector": self.sector,
                 "benchmarks": self.benchmarks,
-                "is_shitcoin": is_high_beta_shitcoin(self.symbol, self.sector),
                 "has_data": not candles.empty,
                 "is_custom_trained": self.is_custom_trained,
                 "training_status": self.training_status,
@@ -591,7 +590,7 @@ class MultiCoinStreamManager:
             if not worker.is_custom_trained:
                 self.schedule_training(sym)
 
-    async def train_symbol_models(self, symbol: str, days: int = 0) -> Dict[str, Any]:
+    async def train_symbol_models(self, symbol: str) -> Dict[str, Any]:
         sym = symbol.strip().upper()
         if sym not in self.workers:
             raise KeyError(f"Symbol {sym} is not currently tracked")
@@ -606,7 +605,7 @@ class MultiCoinStreamManager:
             await self.broadcast({"type": "FORECAST_UPDATE", **worker.snapshot()})
             loop = asyncio.get_running_loop()
             try:
-                report = await loop.run_in_executor(None, worker.train_sync, days)
+                report = await loop.run_in_executor(None, worker.train_sync)
             except Exception as err:
                 report = {"status": "failed", "error": str(err)}
         if sym in self.workers:
@@ -615,10 +614,7 @@ class MultiCoinStreamManager:
 
     # ───────── output ─────────
 
-    def coin_snapshot(self, worker: SymbolWorker) -> Dict[str, Any]:
-        return worker.snapshot()
-
-    def get_snapshot(self, timeframe: str = "15m") -> List[Dict[str, Any]]:
+    def get_snapshot(self) -> List[Dict[str, Any]]:
         """Current state of every tracked coin (all horizons are included)."""
         return [w.snapshot() for w in list(self.workers.values())]
 

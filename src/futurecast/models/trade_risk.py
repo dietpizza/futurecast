@@ -12,14 +12,21 @@ History is used in time order with the same purged slices as the win probabiliti
     | fit | early-stop |  calibrate  |    test    |
     oldest ------------------------------------> newest
 
-Calibration: one multiplier per model, and one for their average, scales the predicted
-bound so exactly 95% of calibration-slice moves stay inside it (split conformal).
+Calibration, per volatility regime: a hidden Markov model (models.regimes) labels every
+candle calm, normal or stormy from the returns up to it. One multiplier per regime, per model
+and for their average, scales the predicted bound so exactly 95% of calibration-slice moves
+in that regime stay inside it (split conformal, conditioned on the regime). A single
+multiplier would hold 95% only on average: too much margin in calm weeks and too little in
+violent hours, when the trailing volatility the target is measured in lags reality. A regime
+with fewer than `min_regime_windows` independent windows in a slice uses the overall multiplier.
 
 Validation: the baseline is volatility alone — the 95th percentile of the normalised
-excursion on everything seen before the test slice, times current volatility. On the
-newest, unseen slice the model must beat that baseline on pinball (quantile) loss with
-90% block-bootstrap confidence while still covering close to 95% of moves. Otherwise
-the baseline is served, like the win probabilities fall back to their base rate.
+excursion on everything seen before the test slice within the current regime, times current
+volatility. On the newest, unseen slice the model must beat that baseline on pinball
+(quantile) loss with 90% block-bootstrap confidence while still covering close to 95% of
+moves. Otherwise the baseline is served, like the win probabilities fall back to their
+volatility-only odds. Test coverage is also reported per regime, next to what a single
+multiplier would have given.
 
 Serving: the procedure is rolled forward (refit on everything before the newest slice,
 recalibrated on the newest slice). Per side it reports the 95% worst move, a 0-100 score
@@ -42,6 +49,7 @@ import xgboost as xgb
 from catboost import CatBoostRegressor
 
 from futurecast.labels.barriers import BarrierSpec, adverse_excursion, horizon_volatility
+from futurecast.models.regimes import VolatilityRegimes, regime_name
 from futurecast.models.trade_probability import (
     HORIZONS_BY_INTERVAL,
     MODEL_NAMES,
@@ -52,7 +60,7 @@ from futurecast.models.trade_probability import (
 
 logger = logging.getLogger(__name__)
 
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 _MIN_BOUND = 1e-3  # floor on a predicted bound (volatility units) before scaling
 _SIGMA_COL = "risk_log_horizon_vol"  # the target's own scale, known at entry, given to every model
 
@@ -71,6 +79,7 @@ class TradeRiskConfig:
     early_stop_frac: float = 0.2
     min_slice_rows: int = 200
     min_independent_test: int = 30  # non-overlapping test windows needed before judging skill
+    min_regime_windows: int = 20  # independent windows a regime needs in a slice for its own multiplier
     bootstrap_rounds: int = 500
     skill_confidence: float = 0.9
     max_rounds: int = 400
@@ -181,15 +190,30 @@ def _conformal_scale(bound: np.ndarray, z: np.ndarray, q: float) -> float:
     return float(np.quantile(z / bound, q))
 
 
-def _calibrate(models: Dict[str, Any], X, z, q: float) -> Tuple[Dict[str, float], float]:
+def _by_regime(values: np.ndarray, regimes: np.ndarray, q: float, n_regimes: int, min_rows: int,
+               fallback: float) -> np.ndarray:
+    """q-quantile of `values` within each regime; regimes with fewer than `min_rows` rows get `fallback`."""
+    out = np.full(n_regimes, fallback, dtype=float)
+    for k in range(n_regimes):
+        v = values[regimes == k]
+        if len(v) >= min_rows:
+            out[k] = np.quantile(v, q)
+    return out
+
+
+def _calibrate(models: Dict[str, Any], X, z, regimes, q: float, n_regimes: int,
+               min_rows: int) -> Tuple[Dict[str, np.ndarray], np.ndarray, float]:
+    """Per-regime conformal multipliers for each model and their average, plus the single overall one."""
+    def scales(bound: np.ndarray) -> np.ndarray:
+        return _by_regime(z / bound, regimes, q, n_regimes, min_rows, _conformal_scale(bound, z, q))
+
     raw = {name: _predict(name, m, X) for name, m in models.items()}
-    per_model = {name: _conformal_scale(r, z, q) for name, r in raw.items()}
-    ensemble = _conformal_scale(np.mean(np.vstack(list(raw.values())), axis=0), z, q)
-    return per_model, ensemble
+    mean = np.mean(np.vstack(list(raw.values())), axis=0)
+    return {name: scales(r) for name, r in raw.items()}, scales(mean), _conformal_scale(mean, z, q)
 
 
-def _ensemble_bound(models: Dict[str, Any], scale: float, X) -> np.ndarray:
-    return scale * np.mean(np.vstack([_predict(name, m, X) for name, m in models.items()]), axis=0)
+def _raw_mean(models: Dict[str, Any], X) -> np.ndarray:
+    return np.mean(np.vstack([_predict(name, m, X) for name, m in models.items()]), axis=0)
 
 
 def _pinball(bound: np.ndarray, z: np.ndarray, q: float) -> np.ndarray:
@@ -220,34 +244,51 @@ def _reference(bounds: np.ndarray, cfg: TradeRiskConfig) -> np.ndarray:
 
 @dataclass
 class SideRisk:
-    """Production quantile models + conformal scales for one horizon and side, with test evidence."""
+    """Production quantile models + per-regime conformal scales for one horizon and side, with test evidence."""
 
     status: str  # "edge" | "no_edge" | "insufficient_data"
-    baseline_z: float  # recent 95th percentile of the normalised excursion, served without edge
-    scale: float = 1.0  # conformal multiplier for the models' average
+    baseline_z: np.ndarray  # recent 95th percentile of the normalised excursion per regime, served without edge
+    scale: np.ndarray = field(default_factory=lambda: np.ones(3))  # conformal multiplier per regime
     models: Dict[str, Any] = field(default_factory=dict)
-    model_scales: Dict[str, float] = field(default_factory=dict)
+    model_scales: Dict[str, np.ndarray] = field(default_factory=dict)
     reference: Optional[np.ndarray] = None  # served bounds (fraction of price) over the newest slice
     metrics: Dict[str, Any] = field(default_factory=dict)
 
-    def predict(self, X: pd.DataFrame, sigma: float) -> Dict[str, Any]:
+    def predict(self, X: pd.DataFrame, sigma: float, regime: int) -> Dict[str, Any]:
         """Served worst-move bound plus model, baseline and per-model bounds for the last row."""
-        baseline = self.baseline_z * sigma
+        baseline = float(self.baseline_z[regime]) * sigma
         if not self.models:
             return {"worst_move": baseline, "model_worst_move": None, "baseline_worst_move": baseline, "per_model": {}}
         raw = {name: float(_predict(name, m, X)[-1]) for name, m in self.models.items()}
-        per_model = {name: self.model_scales[name] * r * sigma for name, r in raw.items()}
-        model_move = self.scale * float(np.mean(list(raw.values()))) * sigma
+        per_model = {name: float(self.model_scales[name][regime]) * r * sigma for name, r in raw.items()}
+        model_move = float(self.scale[regime]) * float(np.mean(list(raw.values()))) * sigma
         served = model_move if self.status == "edge" else baseline
         return {"worst_move": served, "model_worst_move": model_move, "baseline_worst_move": baseline,
                 "per_model": per_model}
 
 
-def _fit_side(X: pd.DataFrame, z: np.ndarray, sigma: np.ndarray, horizon: int, cfg: TradeRiskConfig) -> SideRisk:
+def _coverage_by_regime(z: np.ndarray, regimes: np.ndarray, horizon: int, n_regimes: int,
+                        **bounds: np.ndarray) -> Dict[str, Dict[str, Any]]:
+    """Share of test moves inside each bound, per regime."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for k in range(n_regimes):
+        inside = regimes == k
+        row: Dict[str, Any] = {"n_independent": int(inside.sum() // horizon)}
+        for name, bound in bounds.items():
+            row[name] = round(float(np.mean(z[inside] <= bound[inside])), 4) if inside.any() else None
+        out[regime_name(k, n_regimes)] = row
+    return out
+
+
+def _fit_side(X: pd.DataFrame, z: np.ndarray, sigma: np.ndarray, regimes: np.ndarray, horizon: int,
+              cfg: TradeRiskConfig, n_regimes: int = 3) -> SideRisk:
+    """`regimes` holds each row's filtered volatility regime (0 = calm ... n_regimes - 1 = stormy)."""
     q = cfg.quantile
+    min_rows = cfg.min_regime_windows * horizon
     s = _purged_slices(len(z), horizon, cfg)
     recent = slice(s["calib"].start, len(z))
-    recent_base = float(np.quantile(z[recent], q)) if len(z[recent]) else float("nan")
+    recent_all = float(np.quantile(z[recent], q)) if len(z[recent]) else float("nan")
+    recent_base = _by_regime(z[recent], regimes[recent], q, n_regimes, min_rows, recent_all)
 
     if any(s[k].stop - s[k].start < cfg.min_slice_rows for k in ("fit", "es", "calib", "test")):
         return SideRisk(status="insufficient_data", baseline_z=recent_base,
@@ -257,13 +298,17 @@ def _fit_side(X: pd.DataFrame, z: np.ndarray, sigma: np.ndarray, horizon: int, c
     models = _fit_all(X.iloc[s["fit"]], z[s["fit"]], X.iloc[s["es"]], z[s["es"]], horizon, cfg)
     if not models:
         return SideRisk(status="insufficient_data", baseline_z=recent_base, metrics={"reason": "no model trained"})
-    model_scales, scale = _calibrate(models, X.iloc[s["calib"]], z[s["calib"]], q)
-    base_before = float(np.quantile(z[: s["calib"].stop], q))
+    calib = s["calib"]
+    model_scales, scale, single_scale = _calibrate(models, X.iloc[calib], z[calib], regimes[calib], q, n_regimes, min_rows)
+    seen = slice(0, calib.stop)
+    base_before = _by_regime(z[seen], regimes[seen], q, n_regimes, min_rows, float(np.quantile(z[seen], q)))
 
     test = s["test"]
-    z_t, sig_t = z[test], sigma[test]
-    bound_t = _ensemble_bound(models, scale, X.iloc[test])
-    loss_model, loss_base = _pinball(bound_t, z_t, q), _pinball(np.full_like(z_t, base_before), z_t, q)
+    z_t, sig_t, reg_t = z[test], sigma[test], regimes[test]
+    raw_t = _raw_mean(models, X.iloc[test])
+    bound_t = scale[reg_t] * raw_t
+    base_t = base_before[reg_t]
+    loss_model, loss_base = _pinball(bound_t, z_t, q), _pinball(base_t, z_t, q)
     skill = 1.0 - float(loss_model.sum() / max(loss_base.sum(), 1e-12))
     metrics: Dict[str, Any] = {
         "n_rows": int(len(z)),
@@ -271,12 +316,15 @@ def _fit_side(X: pd.DataFrame, z: np.ndarray, sigma: np.ndarray, horizon: int, c
         "n_independent": int(len(z_t) // horizon),
         "quantile": q,
         "coverage": round(float(np.mean(z_t <= bound_t)), 4),
-        "coverage_baseline": round(float(np.mean(z_t <= base_before)), 4),
+        "coverage_baseline": round(float(np.mean(z_t <= base_t)), 4),
+        "coverage_by_regime": _coverage_by_regime(z_t, reg_t, horizon, n_regimes, model=bound_t,
+                                                  single_scale=single_scale * raw_t, baseline=base_t),
         "pinball_skill": round(skill, 4),
         "pinball_skill_lower": round(_bootstrap_skill_lower(loss_model, loss_base, horizon, cfg), 4),
         "avg_bound_pct": round(float(np.mean(bound_t * sig_t)) * 100, 4),
-        "avg_bound_baseline_pct": round(float(np.mean(base_before * sig_t)) * 100, 4),
-        "scale": round(scale, 4),
+        "avg_bound_baseline_pct": round(float(np.mean(base_t * sig_t)) * 100, 4),
+        "scale": [round(float(v), 4) for v in scale],
+        "single_scale": round(single_scale, 4),
     }
 
     if metrics["n_independent"] < cfg.min_independent_test:
@@ -293,13 +341,14 @@ def _fit_side(X: pd.DataFrame, z: np.ndarray, sigma: np.ndarray, horizon: int, c
         rolled = _fit_all(X.iloc[r["fit"]], z[r["fit"]], X.iloc[r["es"]], z[r["es"]], horizon, cfg)
         if rolled:
             models = rolled
-            model_scales, scale = _calibrate(models, X.iloc[r["calib"]], z[r["calib"]], q)
+            model_scales, scale, _ = _calibrate(models, X.iloc[r["calib"]], z[r["calib"]], regimes[r["calib"]],
+                                                q, n_regimes, min_rows)
 
     newest = r["calib"]
     if status == "edge":
-        served = _ensemble_bound(models, scale, X.iloc[newest]) * sigma[newest]
+        served = scale[regimes[newest]] * _raw_mean(models, X.iloc[newest]) * sigma[newest]
     else:
-        served = recent_base * sigma[newest]
+        served = recent_base[regimes[newest]] * sigma[newest]
 
     return SideRisk(
         status=status,
@@ -339,6 +388,7 @@ class TradeRiskModel:
         self.config = config or TradeRiskConfig()
         self.feature_names: List[str] = []
         self.sides: Dict[str, Dict[str, SideRisk]] = {}
+        self.regimes: Optional[VolatilityRegimes] = None  # labels each candle calm / normal / stormy
         self.trained_at: Optional[str] = None
         self.version = FORMAT_VERSION
 
@@ -353,14 +403,18 @@ class TradeRiskModel:
         high: pd.Series,
         low: pd.Series,
         on_step: Optional[Callable[[str, str], None]] = None,
+        regimes: Optional[VolatilityRegimes] = None,
     ) -> Dict[str, Any]:
         """Fit every horizon/side. Features may contain NaN (handled natively by the boosters).
 
-        `on_step(horizon, side)` is called before each horizon/side is fitted.
+        `on_step(horizon, side)` is called before each horizon/side is fitted. `regimes` may be
+        passed in when already fitted on this history (VolatilityRegimes.fit_on_history).
         """
         self.feature_names = list(features.columns)
         self.sides = {}
-        summary: Dict[str, Any] = {}
+        self.regimes = regimes or VolatilityRegimes.fit_on_history(close)
+        labels = self.regimes.labels(self.regimes.filter_close(close))
+        summary: Dict[str, Any] = {"regimes": self.regimes.summary()}
 
         for h_key, horizon in self.config.horizons.items():
             sigma = horizon_volatility(close, horizon, self.config.barrier).to_numpy()
@@ -372,12 +426,14 @@ class TradeRiskModel:
                 if on_step is not None:
                     on_step(h_key, side)
                 z = excursion[f"{side}_mae"].to_numpy()[usable] / sigma[usable]
-                side_risk = _fit_side(X, z, sigma[usable], horizon, self.config)
+                side_risk = _fit_side(X, z, sigma[usable], labels[usable], horizon, self.config,
+                                      self.regimes.n_states)
                 self.sides[h_key][side] = side_risk
                 m = side_risk.metrics
                 summary[f"{h_key}_{side}"] = {
                     "status": side_risk.status,
                     "coverage": m.get("coverage"),
+                    "coverage_by_regime": m.get("coverage_by_regime"),
                     "pinball_skill": m.get("pinball_skill"),
                     "pinball_skill_lower": m.get("pinball_skill_lower"),
                     "n_independent": m.get("n_independent"),
@@ -391,6 +447,9 @@ class TradeRiskModel:
         """Worst-move bounds, risk scores and leverage limits for the latest bar, per horizon."""
         cfg = self.config
         latest = features.reindex(columns=self.feature_names).iloc[[-1]]
+        probs = self.regimes.filter_close(close)[-1:]
+        regime = int(np.argmax(probs[0]))
+        n_states = self.regimes.n_states
         out: Dict[str, Any] = {}
 
         for h_key, horizon in cfg.horizons.items():
@@ -401,9 +460,9 @@ class TradeRiskModel:
             sides_out: Dict[str, Any] = {}
             for side in SIDES:
                 model = self.sides.get(h_key, {}).get(side)
-                if model is None or not np.isfinite(model.baseline_z):
+                if model is None or not np.isfinite(model.baseline_z[regime]):
                     continue
-                pred = model.predict(X, sigma)
+                pred = model.predict(X, sigma, regime)
                 worst = pred["worst_move"]
                 ref = model.reference
                 score = float(np.searchsorted(ref, worst, side="right")) / len(ref) * 100 if ref is not None else 50.0
@@ -431,6 +490,10 @@ class TradeRiskModel:
                 "quantile": cfg.quantile,
                 "bias": bias,
                 "risk_ratio": round(ratio, 3),
+                # the worst-move multipliers above were calibrated for this regime
+                "regime": regime_name(regime, n_states),
+                "regime_probs": {regime_name(k, n_states): round(float(v), 4) for k, v in enumerate(probs[0])},
+                "storm_chance": round(float(self.regimes.storm_chance(probs, horizon)[0]), 4),
                 **sides_out,
             }
         return out

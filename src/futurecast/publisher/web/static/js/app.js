@@ -36,9 +36,9 @@ const RISK_STATUS = {
   insufficient_data: { label: "Too little data", tag: "tag-warn", note: "Too few independent test windows to judge, so the volatility baseline is shown." },
 };
 const STATUS_INFO = {
-  edge: { label: "Proven edge", tag: "tag-pos", note: "Beat the base rate on unseen data (90% confidence)." },
-  no_edge: { label: "No edge", tag: "", note: "Did not beat the base rate on unseen data, so the recent base rate is shown." },
-  insufficient_data: { label: "Too little data", tag: "tag-warn", note: "Too few independent test trades to judge, so the recent base rate is shown." },
+  edge: { label: "Proven edge", tag: "tag-pos", note: "Beat the volatility-only odds on unseen data (90% confidence), and the long / short split itself predicted outcomes." },
+  no_edge: { label: "No edge", tag: "", note: "Did not beat the volatility-only odds on unseen data, so those are shown." },
+  insufficient_data: { label: "Too little data", tag: "tag-warn", note: "Too few independent test trades to judge, so the volatility-only odds are shown." },
 };
 const ICON_CHEVRON = `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>`;
 const ICON_CLOSE = `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></svg>`;
@@ -358,6 +358,11 @@ function rewardRisk(level) {
   return tp >= sl ? `${ratio(tp, sl)}:1` : `1:${ratio(sl, tp)}`;
 }
 
+// What a probability without a proven edge is: volatility-only odds, or the base rate when even those are missing
+function probabilitySource(d) {
+  return d.probability_source === "base_rate" ? "the recent base rate" : "what volatility alone predicts";
+}
+
 function levelText(side, d) {
   const up = side === "long";
   return `${up ? "+" : "−"}${formatNumber(d.tp_pct, 2)}% / ${up ? "−" : "+"}${formatNumber(d.sl_pct, 2)}%`;
@@ -368,10 +373,10 @@ function levelTip(side, d) {
   const levels = d.levels || [];
   const how = d.level_pick === "model"
     ? `Picked from ${levels.length} take-profit / stop pairs as the one with the highest expected profit after fees at the models' odds: ${signed(d.expected_return_pct, 3)}% per trade.`
-    : `No pair has a proven edge, so this is the pair whose recent win rate lost least after fees (${signed(d.expected_return_pct, 3)}% per trade).`;
+    : `No pair has a proven edge, so this is the pair whose volatility-only odds lose least after fees (${signed(d.expected_return_pct, 3)}% per trade).`;
   const rows = levels.map((o) => {
     const mark = o.level[0] === d.level[0] && o.level[1] === d.level[1] ? "▸ " : "";
-    const odds = `${pct(o.probability)} win${o.status === "edge" ? "" : " (base rate)"}`;
+    const odds = `${pct(o.probability)} win${o.status === "edge" ? "" : o.probability_source === "base_rate" ? " (base rate)" : " (volatility only)"}`;
     return `${mark}${levelText(side, o)} · ${odds} · ${signed(o.expected_return_pct, 3)}%`;
   });
   return {
@@ -455,6 +460,24 @@ function riskData(coin, horizon = currentTimeframe) {
   return (coin.trade_risk || {})[horizon] || null;
 }
 
+// Volatility regime from the risk payload: name, how sure, and the chance of a stormy stretch ahead
+function regimeLines(r, horizon = currentTimeframe) {
+  if (!r || !r.regime) return [];
+  const probs = r.regime_probs || {};
+  const others = Object.keys(probs).filter((k) => k !== r.regime).map((k) => `${k} ${pct(probs[k])}`).join(", ");
+  return [
+    `Volatility regime: ${r.regime} (${pct(probs[r.regime])}${others ? `; ${others}` : ""}), from a hidden Markov model of recent returns.`,
+    `Chance of a stormy stretch within ${horizon}: ${pct(r.storm_chance)}.`,
+  ];
+}
+
+function regimeTag(coin) {
+  const r = riskData(coin);
+  if (!r || !r.regime) return "";
+  const body = [...regimeLines(r), "Worst-case bounds are calibrated separately for calm, normal and stormy stretches."].join("\n");
+  return `<span class="tag${r.regime === "stormy" ? " tag-warn" : ""}" data-tooltip-title="Volatility regime" data-tooltip="${esc(body)}">${esc(titleCase(r.regime))} volatility</span>`;
+}
+
 function worstMoveText(side, d) {
   return `${side === "long" ? "−" : "+"}${formatNumber(d.worst_move_pct, 2)}%`;
 }
@@ -474,6 +497,7 @@ function riskCell(coin) {
   const tip = [
     line("long", "Long"),
     line("short", "Short"),
+    ...regimeLines(r),
     ...notes,
   ].join("\n");
   return `
@@ -509,7 +533,7 @@ function sideVerdict(h, side) {
   const idle = { state: "idle", label: "No trade", pill: "pill-neutral" };
   if (d.status !== "edge") {
     const what = d.status === "insufficient_data" ? "Too little test data to prove an edge" : "No proven edge";
-    return { ...idle, why: `${what}: ${pct(d.probability)} is just the recent base rate` };
+    return { ...idle, why: `${what}: ${pct(d.probability)} is ${probabilitySource(d)}` };
   }
   if (d.probability < d.break_even) return { ...idle, why: `${odds}, ${vsNeeded}` };
   if (!d.signal_validated) {
@@ -545,8 +569,10 @@ function tradeSide(coin, h, side) {
   if (risk) {
     const status = RISK_STATUS[risk.status] || {};
     const m = risk.metrics || {};
+    const stormy = (m.coverage_by_regime || {}).stormy || {};
     const held = isNum(m.coverage) && isNum(m.n_independent)
-      ? `Held ${pct(m.coverage, 1)} of the time on ${m.n_independent.toLocaleString()} unseen windows.`
+      ? `Held ${pct(m.coverage, 1)} of the time on ${m.n_independent.toLocaleString()} unseen windows`
+        + (isNum(stormy.model) && stormy.n_independent ? `, ${pct(stormy.model, 1)} in stormy stretches.` : ".")
       : "";
     const worstTip = {
       title: `Worst 5% of moves within ${currentTimeframe}`,
@@ -598,7 +624,7 @@ function tradeBlock(coin) {
     .join("");
   return `
     <section class="detail-block detail-wide trade-block">
-      <h3>Trade · ${esc(currentTimeframe)} <span class="h3-note">levels from the live price ${formatPrice(coin.current_price)}</span>${elsewhere ? `<span class="trade-elsewhere">Other horizons ${elsewhere}</span>` : ""}</h3>
+      <h3>Trade · ${esc(currentTimeframe)} <span class="h3-note">levels from the live price ${formatPrice(coin.current_price)}</span> ${regimeTag(coin)}${elsewhere ? `<span class="trade-elsewhere">Other horizons ${elsewhere}</span>` : ""}</h3>
       <div class="sides-grid">
         ${tradeSide(coin, h, "long")}
         ${tradeSide(coin, h, "short")}
@@ -693,7 +719,7 @@ function evidenceSide(coin, side, h) {
 
   if (d.status !== "edge") {
     const reason = m.reason ? ` ${esc(m.reason.charAt(0).toUpperCase() + m.reason.slice(1))}.` : "";
-    const verdict = d.status === "insufficient_data" ? "Too little test data to judge." : "Did not beat the base rate on unseen data.";
+    const verdict = d.status === "insufficient_data" ? "Too little test data to judge." : "Did not beat the volatility-only odds on unseen data.";
     return `
       <div class="evidence-side">
         ${head}
@@ -707,8 +733,9 @@ function evidenceSide(coin, side, h) {
       <dl class="kv">
         <dt data-tooltip-title="${esc(levelTip(side, d).title)}" data-tooltip="${esc(levelTip(side, d).body)}">Take-profit / stop</dt><dd>${rewardRisk(d.level)} <span class="val-muted">(best of ${(d.levels || []).length} tried)</span></dd>
         <dt>Recent base rate</dt><dd>${pct(d.base_rate)}</dd>
-        ${isNum(m.brier_skill) ? `<dt data-tooltip-title="Brier skill" data-tooltip="How much better the probabilities scored than always quoting the base rate. Above 0 is better; the lower bound is the 90% worst case.">Skill vs base rate</dt><dd>${signed(m.brier_skill, 3)} <span class="val-muted">(≥ ${signed(m.brier_skill_lower, 3)})</span></dd>` : ""}
-        ${isNum(m.shrink) && m.shrink < 0.995 ? `<dt data-tooltip-title="Overconfidence correction" data-tooltip="On unseen data the raw odds ran too far from the usual win rate, so they are pulled back toward it by this much before being shown.">Odds tempered</dt><dd>${pct(1 - m.shrink)} toward base rate</dd>` : ""}
+        ${isNum(m.brier_skill) ? `<dt data-tooltip-title="Skill vs volatility only" data-tooltip="How much better the probabilities scored than the odds volatility alone gives: a hidden Markov model forecasts how volatile the coin will be, and an absorbing Markov chain turns that into the chance of touching the take-profit first. Knowing price will move a lot is not a direction call, so it earns nothing here. Above 0 is better; the lower bound is the 90% worst case.">Skill vs volatility only</dt><dd>${signed(m.brier_skill, 3)} <span class="val-muted">(≥ ${signed(m.brier_skill_lower, 3)})</span></dd>` : ""}
+        ${isNum(m.direction_skill) ? `<dt data-tooltip-title="Direction check" data-tooltip="Scored against the models' own long and short odds averaged (shifted by the usual long / short gap). A model that only knows how much price will move gives both sides the same odds, so only a real direction call scores above 0.">Direction check</dt><dd>${signed(m.direction_skill, 3)} <span class="val-muted">(≥ ${signed(m.direction_skill_lower, 3)})</span></dd>` : ""}
+        ${isNum(m.shrink) && m.shrink < 0.995 ? `<dt data-tooltip-title="Overconfidence correction" data-tooltip="On unseen data the raw odds ran too far from the volatility-only odds, so they are pulled back toward them by this much before being shown.">Odds tempered</dt><dd>${pct(1 - m.shrink)} toward volatility only</dd>` : ""}
         ${isNum(m.auc) ? `<dt data-tooltip-title="AUC" data-tooltip="How well the model ranks winners above losers. 0.5 is a coin flip, 1.0 is perfect.">Ranking (AUC)</dt><dd>${formatNumber(m.auc, 2)}</dd>` : ""}
       </dl>
       ${reliabilityBlock(coin.symbol, side, d.reliability)}

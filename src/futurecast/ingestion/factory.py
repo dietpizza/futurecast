@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 def detect_exchange(symbol: str) -> str:
@@ -204,6 +204,6 @@ def resolve_benchmarks(
 
 
 def sanitize_symbol_for_filename(symbol: str) -> str:
-    """Convert symbol to safe filename string (e.g. 'B-DOGE_USDT' -> 'coindcx_b_doge_usdt')."""
+    """Convert symbol to safe filename string (e.g. 'B-DOGE_USDT' -> 'b_doge_usdt')."""
     clean = symbol.lower().replace("-", "_").replace(":", "_")
     return clean

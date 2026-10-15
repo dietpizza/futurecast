@@ -3,7 +3,7 @@
 from pathlib import Path
 
 import pytest
-from futurecast.config import load_config, AppConfig, ForecastingConfig
+from futurecast.config import load_config
 
 REPO_CONFIG = Path(__file__).resolve().parents[1] / "config"
 

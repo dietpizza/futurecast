@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import uvicorn
 
@@ -117,9 +117,9 @@ def create_app(
         }
 
     @app.get("/api/coins")
-    async def get_coins(timeframe: str = "15m") -> List[Dict[str, Any]]:
+    async def get_coins() -> List[Dict[str, Any]]:
         mgr: MultiCoinStreamManager = app.state.manager
-        return mgr.get_snapshot(timeframe=timeframe)
+        return mgr.get_snapshot()
 
     @app.get("/api/coindcx/futures")
     async def get_coindcx_futures(q: Optional[str] = None, sector: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -191,20 +191,7 @@ def create_app(
                 "execution_disabled": True,
             }))
             while True:
-                data = await websocket.receive_text()
-                try:
-                    payload = json.loads(data)
-                    action = payload.get("action")
-                    if action == "add_coin":
-                        sym = payload.get("symbol", "").strip().upper()
-                        if sym and detect_exchange(sym) == "coindcx":
-                            mgr.add_symbol(sym, exchange="coindcx")
-                    elif action == "remove_coin":
-                        sym = payload.get("symbol", "").strip().upper()
-                        if sym:
-                            mgr.remove_symbol(sym)
-                except Exception:
-                    pass
+                await websocket.receive_text()  # the page only listens; coins change through the REST API
         except WebSocketDisconnect:
             pass
         finally:
@@ -231,5 +218,5 @@ def run_web_server(
     )
     shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host  # a wildcard bind is not a browsable address
     print(f"\n⚡ FutureCast Web UI running at: http://{shown}:{port} (listening on {host})")
-    print(f"🛡️  Safety: STRICTLY ZERO ORDER EXECUTION\n")
+    print("🛡️  Safety: STRICTLY ZERO ORDER EXECUTION\n")
     uvicorn.run(app, host=host, port=port, log_level="warning")

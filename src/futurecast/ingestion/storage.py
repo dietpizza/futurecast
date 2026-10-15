@@ -14,7 +14,7 @@ def align_cross_asset_data(
     max_gap_ffill_minutes: int = 3,
     freq: str = "1min",
 ) -> pd.DataFrame:
-    """Align target and benchmark assets onto a continuous master UTC grid (1-minute by default).
+    """Align target and benchmark assets onto one continuous UTC grid of `freq` candles.
 
     `max_gap_ffill_minutes` counts bars of `freq`.
     
@@ -51,7 +51,7 @@ def align_cross_asset_data(
         gap_lengths = is_missing.groupby(gap_groups).transform("sum")
 
         # Forward-fill prices up to limit
-        price_cols = [c for c in ["open", "high", "low", "close", "funding_rate", "open_interest"] if c in sub.columns]
+        price_cols = [c for c in ["open", "high", "low", "close", "funding_rate"] if c in sub.columns]
         sub[price_cols] = sub[price_cols].ffill(limit=max_gap_ffill_minutes)
 
         # Volumes for filled bars set to 0.0
@@ -74,5 +74,5 @@ def align_cross_asset_data(
     is_valid = is_valid & merged[core_close_cols].notna().all(axis=1)
 
     aligned = merged.loc[is_valid].drop(columns=excessive_gap_cols)
-    logger.info(f"Aligned cross-asset matrix: {len(aligned)} continuous 1-minute bars.")
+    logger.info(f"Aligned cross-asset matrix: {len(aligned)} continuous {freq} candles.")
     return aligned

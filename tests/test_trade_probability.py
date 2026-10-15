@@ -87,7 +87,8 @@ def test_model_finds_real_edge_and_is_calibrated(fast_config):
     for side in ("long", "short"):
         sm = model.sides["15m"][side].levels[0]
         assert sm.status == "edge", sm.metrics
-        assert sm.metrics["brier_skill"] > 0.05
+        assert sm.metrics["brier_skill"] > 0.05  # against the volatility-only odds
+        assert sm.metrics["direction_skill_lower"] > 0  # the long / short split carries the signal
         assert sm.metrics["auc"] > 0.65
         # Out-of-sample calibration: predicted and observed win rates line up per bin
         for b in sm.metrics["reliability"]:
@@ -101,7 +102,7 @@ def test_model_finds_real_edge_and_is_calibrated(fast_config):
     assert out["long"]["probability"] == out["long"]["model_probability"]
 
 
-def test_model_without_edge_serves_base_rate(fast_config):
+def test_model_without_edge_serves_volatility_only_odds(fast_config):
     features, close, high, low = _synthetic_market(8000, predictive=False, seed=11)
     model = TradeProbabilityModel(fast_config)
     model.fit(features, close, high, low)
@@ -111,9 +112,46 @@ def test_model_without_edge_serves_base_rate(fast_config):
         sm = model.sides["15m"][side].levels[0]
         assert sm.metrics["brier_skill"] < 0.02  # nothing to learn from noise
         if sm.status != "edge":
-            assert out[side]["probability"] == pytest.approx(sm.base_rate)
+            assert out[side]["probability_source"] == "volatility"
+            assert out[side]["probability"] == pytest.approx(out[side]["baseline_probability"])
+            assert 0.0 < out[side]["probability"] < 1.0
     if all(model.sides["15m"][s].status != "edge" for s in ("long", "short")):
         assert out["signal"] == "NEUTRAL"
+
+
+def _volatility_regime_market(n, seed):
+    """No drift at all, but volatility switches between calm and stormy stretches that last for hours."""
+    rng = np.random.default_rng(seed)
+    stormy = np.zeros(n, dtype=bool)
+    for t in range(1, n):
+        stormy[t] = stormy[t - 1] if rng.random() < 0.995 else not stormy[t - 1]
+    vol = np.where(stormy, 0.004, 0.001)
+    close = 100 * np.exp(np.cumsum(rng.normal(0, vol)))
+    wiggle = np.abs(rng.normal(0, 0.3 * vol))
+    idx = pd.date_range("2026-01-01", periods=n, freq="1min", tz="UTC")
+    # The models are told the volatility state outright: everything about size, nothing about direction
+    features = pd.DataFrame({"stormy": stormy.astype(float), "noise": rng.normal(0, 1, n)}, index=idx)
+    return (features, pd.Series(close, idx), pd.Series(close * (1 + wiggle), idx),
+            pd.Series(close * (1 - wiggle), idx))
+
+
+def test_knowing_volatility_alone_is_not_an_edge(fast_config):
+    features, close, high, low = _volatility_regime_market(9000, seed=4)
+    model = TradeProbabilityModel(fast_config)
+    model.fit(features, close, high, low)
+
+    assert model.regimes.sigma[-1] > 2.5 * model.regimes.sigma[0]  # the regime model found both states
+    for side in ("long", "short"):
+        level = model.sides["15m"][side].levels[0]
+        m = level.metrics
+        # Against a flat base rate, knowing the volatility state looks like skill...
+        assert m["brier_skill_vs_base_rate"] > 0.02, m
+        # ...most of which the volatility-only odds already have...
+        assert m["volatility_skill_vs_base_rate"] > 0.02, m
+        assert m["brier_skill"] < 0.02, m
+        # ...and long and short odds rise and fall together, so no direction edge is claimed
+        assert m["direction_skill_lower"] <= 0, m
+        assert level.status != "edge", m
 
 
 def test_too_little_history_is_flagged_not_guessed():

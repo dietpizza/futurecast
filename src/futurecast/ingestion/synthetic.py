@@ -16,7 +16,7 @@ def generate_synthetic_data(
     drift: float = 0.0,
     seed: int = 42,
 ) -> pd.DataFrame:
-    """Generate realistic synthetic 1-minute OHLCV, OI, and funding for offline testing."""
+    """Generate realistic synthetic 1-minute OHLCV and funding for offline testing."""
     np.random.seed(seed)
     timestamps = pd.date_range(start=start, periods=periods, freq="1min", tz="UTC")
     
@@ -52,12 +52,6 @@ def generate_synthetic_data(
     funding_rates_raw = np.random.normal(0.0001, 0.0002, size=n_funding_intervals)
     funding_rates = np.repeat(funding_rates_raw, 480)[:periods]
     
-    # Open interest: random walk around mean
-    oi_base = 50000000.0
-    oi_innovations = np.random.normal(0, 0.001, size=periods)
-    open_interest = oi_base * np.exp(np.cumsum(oi_innovations))
-    open_interest_usd = open_interest * closes
-    
     df = pd.DataFrame({
         "timestamp": timestamps,
         "symbol": symbol,
@@ -71,7 +65,5 @@ def generate_synthetic_data(
         "taker_buy_volume": taker_buy_volumes,
         "taker_buy_quote_volume": taker_buy_quote_volumes,
         "funding_rate": funding_rates,
-        "open_interest": open_interest,
-        "open_interest_usd": open_interest_usd,
     })
     return df

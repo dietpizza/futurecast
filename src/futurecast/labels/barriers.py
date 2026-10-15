@@ -5,7 +5,7 @@ A trade is entered at the close of bar t and held for at most `horizon` bars:
 - A long wins if price touches entry * (1 + tp) before entry * (1 - sl).
 - A short wins if price touches entry * (1 - tp) before entry * (1 + sl).
 - Touching neither before the horizon ends (timeout) is not a win.
-- Touching both inside the same 1-minute bar is ambiguous; it counts as a loss.
+- Touching both inside the same candle is ambiguous; it counts as a loss.
 
 Barrier distances scale with recent volatility, so a "win" means a comparable
 move for a sleepy major and a volatile meme coin, and they are floored so a
@@ -28,7 +28,7 @@ class BarrierSpec:
 
     tp_vol_mult: float = 0.5  # take-profit distance in units of expected horizon volatility
     sl_vol_mult: float = 0.5  # stop-loss distance in the same units
-    vol_window: int = 240  # trailing 1m bars used to estimate volatility
+    vol_window: int = 240  # trailing candles used to estimate volatility (4 hours of 1m candles)
     vol_min_periods: int = 60
     cost_bps: float = 10.0  # assumed round-trip fees + slippage
     min_tp_cost_mult: float = 2.0  # take-profit is never closer than this many round-trip costs

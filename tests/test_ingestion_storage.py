@@ -1,7 +1,6 @@
 """Tests for synthetic data and continuous timestamp alignment."""
 
 from datetime import datetime, timezone
-import pandas as pd
 from futurecast.ingestion.synthetic import generate_synthetic_data
 from futurecast.ingestion.storage import align_cross_asset_data
 
@@ -13,7 +12,6 @@ def test_synthetic_data_generation():
     assert "timestamp" in df.columns
     assert "close" in df.columns
     assert "funding_rate" in df.columns
-    assert "open_interest" in df.columns
     # Ensure High >= max(Open, Close) and Low <= min(Open, Close)
     assert (df["high"] >= df["close"]).all()
     assert (df["high"] >= df["open"]).all()

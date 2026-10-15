@@ -109,7 +109,6 @@ def test_api_coindcx_futures_catalog(test_app):
         meme_results = sec_resp.json()
         assert len(meme_results) >= 5
         assert all(item["sector"] == "MEME" for item in meme_results)
-        assert all(item["is_shitcoin"] is True for item in meme_results)
 
 
 def test_api_status_air_gapped_guarantee(test_app):
@@ -133,12 +132,9 @@ def test_api_coins_and_multi_model_predictions(test_app):
         doge_coin = next((c for c in coins if "DOGE" in c["symbol"]), None)
         assert doge_coin is not None
         assert doge_coin["sector"] == "MEME"
-        assert doge_coin["is_shitcoin"] is True
         assert "benchmarks" in doge_coin
 
-        sol_coin = next((c for c in coins if "SOL" in c["symbol"]), None)
-        assert sol_coin is not None
-        assert sol_coin["is_shitcoin"] is False
+        assert any("SOL" in c["symbol"] for c in coins)
 
         for coin in coins:
             # Offline mode renders synthetic candles and says so
@@ -194,13 +190,17 @@ def test_trained_coin_serves_calibrated_trade_probabilities_and_risk(tmp_path):
             assert 0.0 <= h[side]["probability"] <= 1.0
             assert 0.0 < h[side]["break_even"] < 1.0
             assert h[side]["status"] in ("edge", "no_edge", "insufficient_data")
-            if h[side]["status"] != "edge":
-                assert h[side]["probability"] == h[side]["base_rate"]
+            if h[side]["status"] != "edge":  # no direction edge: what volatility alone predicts
+                assert h[side]["probability_source"] == "volatility"
+                assert h[side]["probability"] == h[side]["baseline_probability"]
 
         risk = coin["trade_risk"]
         assert set(risk) == {"15m"}
         r = risk["15m"]
         assert r["bias"] in ("LONG_RISKIER", "SHORT_RISKIER", "BALANCED")
+        assert r["regime"] in ("calm", "normal", "stormy")
+        assert sum(r["regime_probs"].values()) == pytest.approx(1.0, abs=1e-3)
+        assert 0.0 <= r["storm_chance"] <= 1.0
         for side in ("long", "short"):
             assert r[side]["worst_move_pct"] > 0
             assert 1 <= r[side]["score"] <= 99

@@ -1,4 +1,5 @@
-# LightGBM Model & Forecasting Configuration
+# Example overrides: copy to ~/.futurecast/config/model.yaml to use (this repo copy is not read).
+# lightgbm: the secondary residual-alpha ensemble. forecasting: its z-score signal and logs.
 
 lightgbm:
   objective: "regression_l1"
@@ -22,5 +23,6 @@ forecasting:
   zscore_window_minutes: 1440
   signal_threshold_z: 1.5
   output_dir: "logs/forecasts"
+  log_limit_mb: 32  # forecast logs kept in total; the oldest files are deleted first
   air_gapped: true
   execution_enabled: false   # Strict safety flag: MUST BE FALSE
