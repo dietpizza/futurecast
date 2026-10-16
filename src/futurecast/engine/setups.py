@@ -162,6 +162,7 @@ def live_view(aligned_ltf: pd.DataFrame, aligned_htf: pd.DataFrame, symbol: str,
             latest[d] = side.iloc[-1:]
     out: Dict[str, Any] = {"as_of": _iso(close_times(ltf.index, spec.ltf_minutes)[-1]), "signal": "NEUTRAL",
                            "entry_interval": spec.entry_interval, "context_interval": spec.context_interval,
+                           "cancel_r": spec.cancel_r,
                            "costs": spec.costs(), "long": None, "short": None}
     if not latest:
         return {"structure": structure, "setups": out}

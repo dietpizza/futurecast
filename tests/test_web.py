@@ -200,7 +200,7 @@ def test_trained_coin_serves_setups_with_win_chances_and_risk(tmp_path):
         evidence = coin["setup_model"]
         assert (evidence["entry_interval"], evidence["context_interval"]) == (SETUP_SPEC.entry_interval,
                                                                             SETUP_SPEC.context_interval)
-        assert set(evidence["targets"]) == {"3", "4"}
+        assert set(evidence["targets"]) == {"2", "3", "4"}
         bt = evidence["backtests"]["3"]
         assert "trades" not in bt and bt["summary"]["grades"] == ["A+"] and bt["equity"][0]["equity"] == 100.0
         assert bt["summary"]["costs"] == pytest.approx(SETUP_SPEC.costs())
@@ -224,7 +224,7 @@ def test_trained_coin_serves_setups_with_win_chances_and_risk(tmp_path):
                                                                 "expired", "cancelled")
             up = d["side"] == "long"
             assert (d["stop"] < d["entry"] < d["take_profit"]) if up else (d["stop"] > d["entry"] > d["take_profit"])
-            assert [t["target_r"] for t in d["targets"]] == [3.0, 4.0]
+            assert [t["target_r"] for t in d["targets"]] == [2.0, 3.0, 4.0]
             assert 0.0 <= d["probability"] <= 1.0 and 0.0 < d["break_even"] < 1.0
             if d["status"] != "edge":  # no proven edge: the rules' own win rate for the grade
                 assert d["probability_source"] == "rules" and d["probability"] == d["rules_probability"]

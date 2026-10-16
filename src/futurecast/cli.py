@@ -43,7 +43,7 @@ def backtest(
     from futurecast.publisher.multi_manager import _binance_client
 
     fees = {k: v for k, v in (("maker_bps", maker), ("taker_bps", taker), ("slippage_bps", slippage)) if v is not None}
-    spec = SetupSpec.for_charts(entry, context, targets=tuple(sorted({3.0, 4.0, target})), **fees)
+    spec = SetupSpec.for_charts(entry, context, targets=tuple(sorted({2.0, 3.0, 4.0, target})), **fees)
     grades = ("A+", "B") if grade.lower() == "all" else (grade,)
     client = _binance_client(load_config().assets)
     candles = {}

@@ -14,7 +14,7 @@ context): 15m entries in 1h context by default, the pair that held up best in ba
    gap's first candle at or after the pullback's low, its third candle at most
    `gap_after_break` candles after the CHoCH).
 4. Orders: a limit buy at the gap's midpoint, the stop just below the pullback's low, and
-   take-profits at `targets` multiples of the entry-to-stop distance (R).
+   take-profits at `targets` multiples of the entry-to-stop distance (R): 2R, 3R and 4R.
 
 Every entry-chart CHoCH that leaves a gap is a setup. Step 1's two checks are recorded, not
 required: a setup passing all four steps is grade "A+", the rest are grade "B" and are kept so
@@ -68,7 +68,8 @@ class SetupSpec:
     min_risk_bps: float = 10.0  # tighter entry-to-stop distances are skipped: fees would swallow them
     fill_window: int = 30  # entry candles the limit order waits for a fill (7.5 hours)
     max_hold: int = 240  # entry candles a filled trade is held at most (2.5 days)
-    targets: Tuple[float, ...] = field(default=(3.0, 4.0))  # take-profits in multiples of R
+    targets: Tuple[float, ...] = field(default=(2.0, 3.0, 4.0))  # take-profits in multiples of R
+    cancel_r: float = 3.0  # an unfilled limit is cancelled once price runs this many R away, for every target
     # Costs per leg, in bps of the entry price. The entry and the take-profit are resting limit
     # orders (maker); the stop and a timeout exit are market orders (taker), and a triggered stop
     # also fills past its price. Fees: CoinDCX USDT-M futures, General tier, 0.025% maker and

@@ -57,7 +57,7 @@ logger = logging.getLogger(__name__)
 
 MODEL_NAMES = ("LightGBM", "XGBoost", "CatBoost")
 GRADES = ("A+", "B")
-FORMAT_VERSION = 3  # 3: per-leg maker/taker costs
+FORMAT_VERSION = 4  # 3: per-leg maker/taker costs; 4: 2R target
 _EPS = 1e-6
 
 

@@ -1,8 +1,9 @@
 """What happened to each setup's orders (see features.setups).
 
 The limit order waits up to `fill_window` candles after the setup candle. It fills on the first
-candle that trades through the entry, and is cancelled if price first reaches the smallest
-take-profit without filling. Once filled the trade is left alone ("set and forget"):
+candle that trades through the entry, and is cancelled if price first runs `cancel_r` R away
+(3R) without filling. One cancel level for every target keeps a setup's fill the same whichever
+target is traded. Once filled the trade is left alone ("set and forget"):
 
 - It wins if price touches the take-profit before the stop. On the fill candle only the stop
   counts, because the candle cannot say whether its high came before or after the fill.
@@ -45,7 +46,6 @@ def setup_outcomes(setups: pd.DataFrame, high: pd.Series, low: pd.Series, close:
     spec = spec or SetupSpec()
     h, l, c = (s.to_numpy(dtype=float) for s in (high, low, close))
     n = len(c)
-    first_target = min(spec.targets)
     out = {"fill": np.full(len(setups), "pending", dtype=object), "fill_idx": np.full(len(setups), -1, dtype=np.int64),
            "order_end": np.full(len(setups), -1, dtype=np.int64)}
     for T in spec.targets:
@@ -61,10 +61,10 @@ def setup_outcomes(setups: pd.DataFrame, high: pd.Series, low: pd.Series, close:
         start, stop_win = s + 1, min(s + 1 + spec.fill_window, n)
         if d > 0:
             fills = l[start:stop_win] <= entry
-            runs = h[start:stop_win] >= entry + first_target * R
+            runs = h[start:stop_win] >= entry + spec.cancel_r * R
         else:
             fills = h[start:stop_win] >= entry
-            runs = l[start:stop_win] <= entry - first_target * R
+            runs = l[start:stop_win] <= entry - spec.cancel_r * R
         f, r = _first(fills), _first(runs)
         if f < len(fills) and f <= r:
             fill = start + f

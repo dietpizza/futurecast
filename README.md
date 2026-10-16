@@ -5,7 +5,7 @@ for context, a lower chart for entries (1-hour and 15-minute by default). For ev
 
 - **market structure** on both charts (swing points, breaks of structure, changes of character) and
   the open **fair value gaps** nearest to price, found by exact rules,
-- the latest long and short **setup** with its limit entry, stop and 3R / 4R take-profit, an A+ checklist,
+- the latest long and short **setup** with its limit entry, stop and 2R / 3R / 4R take-profit, an A+ checklist,
   and what happened to its orders,
 - a **backtest** of the rules on two years of the coin's history: win rate, average R, profit factor,
   drawdown and an equity curve, risking 1% per trade,
@@ -34,7 +34,7 @@ A secondary 15-minute cross-asset "residual alpha" forecast still trains and is 
    [ Rules ]   swing points, BOS / CHoCH, fair value gaps on 1h and 15m → setups
                │
                ▼
-   [ Labels ]  setup filled? take-profit before stop (3R, 4R); worst move;
+   [ Labels ]  setup filled? take-profit before stop (2R, 3R, 4R); worst move;
                │  15-minute residual alpha
                ▼
    [ Time-ordered fit → calibrate → test, no outcome crossing a slice boundary ]
@@ -77,7 +77,7 @@ The rules run on a pair of charts: 15-minute entries in 1-hour context by defaul
 2. **Shift:** an entry-chart change of character (CHoCH) in the trade's direction.
 3. **Gap:** the move that broke structure left an entry-chart fair value gap behind.
 4. **Orders:** a limit at that gap's midpoint (waiting up to 30 entry candles), a stop just past the
-   pullback's extreme, take-profits at 3R and 4R. Once filled the trade is left alone for up to 240
+   pullback's extreme, take-profits at 2R, 3R and 4R (the limit is cancelled if price runs 3R away first). Once filled the trade is left alone for up to 240
    entry candles.
 
 Every entry-chart CHoCH that leaves a gap is a setup; those passing both context checks are grade
@@ -110,8 +110,13 @@ cost (the model before per-leg fees):
 | 15m / 4h | 2 years | −0.36R | −0.16R | −0.14R | −0.15R |
 
 With per-leg fees, 15m / 1h is a little worse on every coin, because about 70% of trades end at the
-stop, which costs more than the flat rate: BTC −0.56R, ETH +0.06R, SOL −0.01R, BAT +0.01R at 3R
-(4R: −0.57R, +0.06R, −0.00R, −0.06R).
+stop, which costs more than the flat rate:
+
+| 15m / 1h, per-leg fees | BTC | ETH | SOL | BAT |
+|---|---|---|---|---|
+| 2R | −0.48R | −0.01R | −0.01R | −0.02R |
+| 3R | −0.56R | +0.06R | −0.01R | +0.01R |
+| 4R | −0.57R | +0.06R | −0.00R | −0.06R |
 
 Higher charts help mostly because fees shrink relative to the stop (0.4–0.7R per trade on 1m entries,
 about 0.2R on 15m). Before fees, A+ setups average close to 0R almost everywhere: as coded, the strategy
@@ -119,7 +124,7 @@ has no clear edge, and none of these results is large enough to trust over 170�
 
 ## What the models predict
 
-- **Win chance:** whether a filled setup reaches its take-profit before its stop (3R and 4R each get
+- **Win chance:** whether a filled setup reaches its take-profit before its stop (2R, 3R and 4R each get
   their own models), from the setup's geometry, its 15m context, the time of day and the 38 market
   features. Touching both in one candle counts as a loss.
 - **Worst move:** quantile regressors estimate the 95th percentile of how far price moves against each

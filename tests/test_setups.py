@@ -56,7 +56,9 @@ def test_a_plus_long_setup_orders_and_outcomes():
     out = setup_outcomes(longs, ltf["high"], ltf["low"], ltf["close"], SPEC).iloc[0]
     assert out["fill"] == "filled" and out["fill_idx"] == 12  # low 103.1 trades through 103.15
     R = 103.15 - s["stop"]
-    assert 106.8 >= 103.15 + 3 * R > 106.0  # candle 15 reaches 3R ...
+    assert 106.0 >= 103.15 + 2 * R  # candle 14 reaches 2R ...
+    assert (out["outcome_2"], out["r_2"], out["end_2"]) == ("won", 2.0, 14)
+    assert 106.8 >= 103.15 + 3 * R > 106.0  # ... candle 15 reaches 3R ...
     assert (out["outcome_3"], out["win_3"], out["r_3"], out["end_3"]) == ("won", 1.0, 3.0, 15)
     # ... but not 4R, and candle 17 hits the stop
     assert (out["outcome_4"], out["win_4"], out["r_4"], out["end_4"]) == ("lost", 0.0, -1.0, 17)
@@ -239,7 +241,7 @@ def test_live_view_signals_only_waiting_a_plus_setups_with_a_validated_record():
         m = SetupModel(SetupModelConfig(spec=SPEC))
         m.targets = {key: TargetModel(target=T, status="no_edge", base_rates={"A+": rate_a_plus, "B": 0.1},
                                       validated=validated)
-                     for key, T in (("3", 3.0), ("4", 4.0))}
+                     for key, T in (("2", 2.0), ("3", 3.0), ("4", 4.0))}
         return m
 
     feats = pd.DataFrame(index=waiting.index)

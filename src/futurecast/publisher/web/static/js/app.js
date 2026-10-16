@@ -427,7 +427,7 @@ function setupVerdict(coin, side) {
       lost: "filled, then hit the stop.",
       timeout: "filled, but reached neither level in time.",
       expired: "price never came back to the limit.",
-      cancelled: `price reached ${s.target_r}R before coming back to the limit.`,
+      cancelled: `price ran ${setupsOf(coin).cancel_r || 3}R away before coming back to the limit.`,
     }[s.state] || "";
     return { state: "idle", label: STATE_LABELS[s.state] || titleCase(s.state), pill: "pill-neutral", why: `${s.grade} setup ${ago}: ${what}` };
   }
@@ -622,7 +622,7 @@ function liveTrade(coin, side) {
   const entrySub = filled ? `filled ${whenText(s.filled_at)}` : away;
   const entryTip = {
     title: "Entry · limit order",
-    body: `Midpoint of the ${charts.entry} fair value gap ${formatPrice(s.gap.bottom)} – ${formatPrice(s.gap.top)}. The order waits until ${whenText(s.order_expires)} and is cancelled if price reaches the first target before filling.`,
+    body: `Midpoint of the ${charts.entry} fair value gap ${formatPrice(s.gap.bottom)} – ${formatPrice(s.gap.top)}. The order waits until ${whenText(s.order_expires)} and is cancelled if price runs ${setupsOf(coin).cancel_r || 3}R away before filling.`,
   };
   const stopTip = {
     title: "Stop",
