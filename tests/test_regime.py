@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from deltarisk.stats.regime import WINDOW_BY_NAME, WINDOWS, regime_frame, regime_view
+from deltarisk.stats.regime import WINDOW_BY_NAME, WINDOWS, regime_frame
 
 SYM = "B-TEST_USDT"
 HOUR = WINDOW_BY_NAME["1h"]  # 12 candles of 5m, looking back 36
@@ -53,12 +53,8 @@ def test_spike_is_wild():
     assert last["state"] == "wild" and last["volatility_label"] == "wild"
 
 
-def test_no_reading_without_history_and_none_for_missing_charts():
+def test_no_reading_without_history():
     assert pd.isna(regime_frame(_frame(np.full(20, SIGMA)), SYM, HOUR)["state"].iloc[-1])
-    view = regime_view({"5m": _frame(np.random.default_rng(1).normal(0, SIGMA, 4000))}, SYM)
-    assert view["8h"] is None and view["2h"] is None
-    assert view["1h"]["state"] in {"trending", "choppy", "quiet", "wild"}
-    assert -100 <= view["5m"]["momentum"] <= 100
 
 
 def test_trend_record_counts_what_followed_trending_readings():

@@ -190,7 +190,8 @@ def test_history_and_live_candles_carry_the_settled_funding_rate(clock, monkeypa
     train = SymbolWorker.train
     monkeypatch.setattr(SymbolWorker, "train", lambda self, lgbm=True, progress=False: train(self, False, progress))
 
-    worker.load_history(client)
+    worker.download_history(client)
+    worker.prepare_models()
 
     assert worker.status == "ready" and worker.progress is None
     assert worker.risk_view["8h"]["long"]["model"] == "har"  # trained after the download (baseline only here)

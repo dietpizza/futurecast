@@ -187,12 +187,6 @@ class SymbolWorker:
         self.progress = {"label": label, "step": step, "steps": steps, "done": done, "total": total,
                          "fraction": round((step - 1 + within) / steps, 4)}
 
-    def load_history(self, client: Optional[BinancePublicClient] = None) -> None:
-        """download_history, then prepare_models. Failures to download leave status "failed" and
-        the error, and re-raise."""
-        self.download_history(client)
-        self.prepare_models()
-
     def download_history(self, client: Optional[BinancePublicClient] = None) -> None:
         """Download HISTORY_BARS closed candles per chart (status "downloading"; candles and funding
         rates already in the disk caches are not fetched again) and compute the funding reading.

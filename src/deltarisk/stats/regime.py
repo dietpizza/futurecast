@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import math
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -154,23 +154,3 @@ def trend_record(frame: pd.DataFrame, symbol: str, window: Window, regime: pd.Da
         "base": record(np.ones(len(fwd), dtype=bool), 1.0),
         "round_trip_pct": round_trip_pct,
     }
-
-
-def regime_view(candles: Dict[str, pd.DataFrame], symbol: str, spec: RegimeSpec = RegimeSpec()) -> Dict[str, Any]:
-    """The latest reading per window, None where its chart is missing or too short."""
-    out: Dict[str, Optional[Dict[str, Any]]] = {}
-    for w in WINDOWS:
-        frame = candles.get(w.interval)
-        if frame is None or frame.empty:
-            out[w.name] = None
-            continue
-        last = regime_frame(frame, symbol, w, spec).iloc[-1]
-        if pd.isna(last["state"]):
-            out[w.name] = None
-            continue
-        out[w.name] = {
-            "momentum": float(last["momentum"]), "momentum_label": last["momentum_label"],
-            "efficiency": float(last["efficiency"]), "vol_pct": float(last["vol_pct"]),
-            "volatility": last["volatility_label"], "state": last["state"],
-        }
-    return out
