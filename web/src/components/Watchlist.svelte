@@ -1,35 +1,57 @@
 <script lang="ts">
-  import { app } from "../lib/live.svelte";
+  import { app, sortBy } from "../lib/live.svelte";
+  import { sortCoins, type SortKey } from "../lib/sort";
   import CoinRow from "./CoinRow.svelte";
+  import Icon from "./Icon.svelte";
 
-  const h = $derived(app.timeframe);
+  const w = $derived(app.window);
+  const coins = $derived(sortCoins(Object.entries(app.coins), app.sort, app.window, app.stopPct));
 </script>
+
+<!-- A sortable column head: click cycles its first direction, the other, then the added order.
+     The sorted column shows a chevron (down: highest or last first; up: lowest or first first). -->
+{#snippet sortable(key: SortKey, label: string, title: string, tip: string, tone: string)}
+  {@const on = app.sort?.key === key}
+  <button
+    class={["sort-head caps", on && "is-sorted"]}
+    onclick={() => sortBy(key)}
+    aria-label="Sort by {title || label}{on ? (app.sort?.dir === 'asc' ? ', ascending' : ', descending') : ''}"
+  >
+    {#if tip}
+      <span class={["th-help", tone]} data-tooltip-title={title} data-tooltip={tip}>{label}</span>
+    {:else}
+      <span class={tone}>{label}</span>
+    {/if}
+    {#if on}<Icon name="chevron" class="size-3 {app.sort?.dir === 'asc' ? 'rotate-180' : ''}" />{/if}
+  </button>
+{/snippet}
 
 <!-- The list's box is drawn by the head and each row rather than by the section, so an open
      row can step out of it as its own card, with the rows around it closing off their groups. -->
 <section class="watchlist" aria-label="Tracked pairs">
   <div
     class="row-grid caps sticky top-(--header-h) z-10 h-[38px] border border-border bg-surface-muted text-[12.5px] font-semibold whitespace-nowrap text-muted max-sm:hidden"
-    aria-hidden="true"
   >
-    <span>Pair</span>
+    <span>{@render sortable("pair", "Pair", "", "", "")}</span>
     <span class="text-right">Price</span>
-    <span><span class="th-help" data-tooltip-title="Momentum signal" data-tooltip="Long or Short only when, after past moves like the latest one (same fifth of all moves of this length), the next window averaged more than a market round trip's fees in one direction, the 95% range of that average excludes zero, and it held in both halves of the history. Statistics, not a model: no edge is the usual answer.">Signal</span></span>
-    <span class="text-right"><span class="th-help" data-tooltip-title="Last move" data-tooltip="Return over the last window, z (the move in units of a typical move of that length, from the last 14 days' volatility) and its percentile among every past move of that length.">Move · {h}</span></span>
-    <span class="text-right"><span class="th-help" data-tooltip-title="After similar moves" data-tooltip="Mean return over the next window after past moves in the same fifth as the latest one, and how often it rose. Colored only when the 95% range of the mean excludes zero.">Next {h}</span></span>
-    <span class="max-md:hidden"><span class="th-help" data-tooltip-title="Character" data-tooltip="Variance-ratio test at this horizon: Trending when moves keep their direction more than a random walk would (ratio above 1, p below 0.05), Reverting when they turn back (below 1), else Random.">Character</span></span>
-    <span><span class="th-help" data-tooltip-title="Taker flow" data-tooltip="Share of the traded value bought with market orders over the last window, and its percentile among past windows. Aggressive buyers above 50%.">Taker flow · {h}</span></span>
-    <span class="max-lg:hidden"><span class="th-help" data-tooltip-title="Order book" data-tooltip="Share of resting limit-order liquidity on the bid (buy) side across the top 20 levels.">Order book</span></span>
+    <span>{@render sortable("call", `Call · ${w}`, "Call", "Long when momentum is bullish in a trending market and a long would hit your stop less than half the time within the window; Short the mirror; otherwise Wait. A rule, not a forecast: hover a call for how the next window went after past trending readings on that coin.", "")}</span>
+    <span class="max-md:hidden">{@render sortable("tier", `Tier`, "Tier and leverage", "Megacap (BTC, ETH, SOL, BNB, XRP) 20×, shitcoin (meme coins, or under $50M traded on Binance in 24 hours) 3×, altcoin 10×. Change it in the open row.", "")}</span>
+    <span class="group-start text-right">{@render sortable("long", `Long risk`, "Long risk", "Chance in % that a long opened now hits your stop within the window, at the coin's leverage. Below it: the 1-in-10 bad case as a price move.", "th-fwd")}</span>
+    <span class="text-right">{@render sortable("short", `Short risk`, "Short risk", "Chance in % that a short opened now hits your stop within the window, at the coin's leverage. Below it: the 1-in-10 bad case as a price move.", "th-fwd")}</span>
+    <span class="group-start max-md:hidden">{@render sortable("momentum", `Momentum · ${w}`, "Momentum", "What price did over the last few windows, −100 to +100. Bullish above +25, bearish below −25. A description, not a forecast.", "th-now")}</span>
+    <span class="max-md:hidden"><span class="th-help th-now" data-tooltip-title="Market state" data-tooltip="Wild (volatility in the top 10% of 30 days), trending (a fairly straight move with momentum), quiet (volatility in the bottom quarter) or choppy.">State</span></span>
+    <span class="max-md:hidden">{@render sortable("volatility", `Volatility`, "Volatility", "How wild the last few windows were against the last 30 days: calm (bottom quarter), normal, high (top quarter), wild (top 10%).", "th-now")}</span>
+    <span class="max-lg:hidden">{@render sortable("funding", `Funding`, "Funding", "The latest settled funding rate and its percentile over 90 days. Top 10%: longs crowded; bottom 10%: shorts crowded.", "th-now")}</span>
     <span></span>
   </div>
 
-  {#each Object.entries(app.coins) as [symbol, coin] (symbol)}
+  {#each coins as [symbol, coin] (symbol)}
     <CoinRow {symbol} {coin} />
   {:else}
     <div class="px-6 py-14 text-center">
       <h3 class="text-2xl font-semibold tracking-[0.04em] uppercase">Your watchlist is empty</h3>
       <p class="mx-auto mt-1.5 mb-[18px] max-w-[360px] text-[14.5px] text-dim">
-        Add a CoinDCX futures pair to start watching its momentum statistics.
+        Add a CoinDCX futures pair to see how likely a long or a short is to hit your stop.
       </p>
       <button class="btn btn-primary mx-auto" onclick={() => (app.sidebarOpen = true)}>
         Add pair <kbd class="hotkey-hint">/</kbd>
@@ -37,3 +59,25 @@
     </div>
   {/each}
 </section>
+
+<style>
+  .sort-head {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font: inherit;
+    letter-spacing: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+  }
+
+  .sort-head:hover > :first-child {
+    filter: brightness(1.25);
+  }
+
+  .sort-head.is-sorted {
+    font-weight: 700;
+  }
+</style>

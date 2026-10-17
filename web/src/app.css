@@ -61,9 +61,12 @@
   --color-neu-soft: var(--neu-soft);
   --color-warn: var(--warn);
   --color-warn-soft: var(--warn-soft);
+  --color-risk-low: var(--risk-low);
+  --color-risk-mid: var(--risk-mid);
+  --color-risk-high: var(--risk-high);
+  --color-fwd: var(--fwd);
+  --color-now: var(--now);
   --color-rule: var(--rule);
-  --color-book-bid: var(--book-bid);
-  --color-book-ask: var(--book-ask);
   --color-header: var(--header-bg);
   --color-backdrop: var(--backdrop);
   --color-focus-ring: var(--focus-ring);
@@ -117,12 +120,17 @@
   --neu-soft: #eee3e0;
   --warn: #946f00;
   --warn-soft: #f8efcc;
+  /* Risk score bands (the stop-hit chance): low, middle, high */
+  --risk-low: #077a55;
+  --risk-mid: #946f00;
+  --risk-high: #c81e3c;
+  /* Underlines that tell the two kinds of numbers apart: about the next window (forecasts) and
+     about the last few windows (descriptions). Kept off the risk and label palette. */
+  --fwd: #7c4ddb;
+  --now: #c46a12;
 
   --surface-raised: #ffffff;
   --well: #f6efed;
-  /* Order book bar: bid and ask matched in contrast */
-  --book-bid: #12a374;
-  --book-ask: #e3364f;
   --flash-pos: #d5efe2;
   --flash-neg: #f8d5db;
   --header-bg: rgba(243, 236, 234, 0.92);
@@ -151,8 +159,8 @@
 
   --font: "Rajdhani", "Avenir Next Condensed", "Arial Narrow", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
-  /* Watchlist columns: pair, price, signal, move, next, character, flow, book, actions */
-  --cols: minmax(140px, 1.2fr) 112px 104px 104px 104px 96px minmax(120px, 1fr) minmax(112px, 1fr) 68px;
+  /* Watchlist columns: pair, price, call, tier | long risk, short risk | momentum, state, volatility, funding | actions */
+  --cols: minmax(110px, 1.1fr) 96px 76px 72px 116px 108px minmax(110px, 1fr) 76px 76px 96px 68px;
 
   color-scheme: light;
 }
@@ -191,9 +199,12 @@
   --neu-soft: rgba(228, 243, 242, 0.06);
   --warn: #f2e04a;
   --warn-soft: rgba(242, 224, 74, 0.1);
+  --risk-low: #3df5a7;
+  --risk-mid: #f2e04a;
+  --risk-high: #ff4a66;
+  --fwd: #b08cff;
+  --now: #ff9f45;
 
-  --book-bid: #1fd68b;
-  --book-ask: #e8364f;
   --flash-pos: rgba(61, 245, 167, 0.24);
   --flash-neg: rgba(255, 74, 102, 0.26);
   --header-bg: rgba(11, 6, 8, 0.88);
@@ -209,12 +220,13 @@
   --shadow-drawer: -12px 0 32px rgba(0, 0, 0, 0.6);
 }
 
+/* Narrower: funding drops out, then tier, momentum, state and volatility (the call sums up the last three) */
 @media (max-width: 1179.98px) {
-  :root { --cols: minmax(130px, 1.2fr) 108px 100px 100px 100px 92px minmax(108px, 1fr) 68px; }
+  :root { --cols: minmax(110px, 1.1fr) 96px 76px 72px 116px 108px minmax(110px, 1fr) 76px 76px 68px; }
 }
 
 @media (max-width: 979.98px) {
-  :root { --cols: minmax(110px, 1.2fr) 100px 96px 92px 92px minmax(100px, 1fr) 64px; }
+  :root { --cols: minmax(100px, 1.1fr) 92px 76px 104px 104px 64px; }
 }
 
 @layer base {
@@ -393,38 +405,6 @@
     opacity: 0.75;
   }
 
-  .pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    height: 24px;
-    padding: 0 9px;
-    border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
-    font-size: 13px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    white-space: nowrap;
-  }
-
-  .pill::before {
-    content: "";
-    width: 6px;
-    height: 6px;
-    background: currentColor;
-  }
-
-  .pill-bull { background: var(--pos-soft); color: var(--pos); }
-  .pill-bear { background: var(--neg-soft); color: var(--neg); }
-  .pill-neutral { background: var(--neu-soft); color: var(--neu); }
-  .pill-warn { background: var(--warn-soft); color: var(--warn); }
-
-  .pill-sm {
-    height: 20px;
-    padding: 0 7px;
-    font-size: 12px;
-  }
-
   /* Numbers colored by what they say */
   .val-pos { color: var(--pos); }
   .val-neg { color: var(--neg); }
@@ -439,18 +419,79 @@
     text-underline-offset: 4px;
   }
 
-  /* Bid/ask (or buy/sell) bar */
-  .book-bar {
-    display: flex;
-    gap: 2px;
-    height: 5px;
-    max-width: 120px;
-    overflow: hidden;
+  /* Column heads of next-window numbers (th-fwd) and of last-few-windows numbers (th-now) are written
+     in the group's color instead of the label red; the values below stay as they are. u-fwd / u-now
+     color the cheat sheet's terms the same way. */
+  .th-fwd,
+  .u-fwd { color: var(--fwd); }
+  .th-now,
+  .u-now { color: var(--now); }
+
+  /* The first cell of a group of columns: a hairline before it */
+  .group-start {
+    box-shadow: inset 1px 0 0 var(--border);
+    padding-left: 14px;
   }
 
-  .book-bar > :first-child { flex: none; background: var(--book-bid); }
-  .book-bar > :last-child { flex: 1; background: var(--book-ask); }
-  .book-bar.is-empty { background: var(--neu-soft); }
+  /* The Long / Short / Wait call: a square badge in the side's color */
+  .call {
+    display: inline-flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 9px;
+    border: 1px solid color-mix(in srgb, currentColor 45%, transparent);
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+  }
+
+  .call-long { background: var(--pos-soft); color: var(--pos); }
+  .call-short { background: var(--neg-soft); color: var(--neg); }
+  .call-wait { background: var(--neu-soft); color: var(--neu); }
+
+  /* Risk scores colored by band */
+  .risk-low { color: var(--risk-low); }
+  .risk-mid { color: var(--risk-mid); }
+  .risk-high { color: var(--risk-high); }
+
+  /* A 0–100 bar filled in the score's color */
+  .risk-bar {
+    height: 4px;
+    max-width: 104px;
+    background: var(--neu-soft);
+  }
+
+  .risk-bar > span {
+    display: block;
+    height: 100%;
+    background: currentColor;
+  }
+
+  /* Momentum −100..+100 as a bar growing either way from the middle */
+  .mom-bar {
+    position: relative;
+    height: 4px;
+    max-width: 104px;
+    background: var(--neu-soft);
+  }
+
+  .mom-bar::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -2px;
+    bottom: -2px;
+    width: 1px;
+    background: var(--border-strong);
+  }
+
+  .mom-bar > span {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+  }
 
   .flash-green { animation: flash-green 0.9s ease-out; }
   .flash-red { animation: flash-red 0.9s ease-out; }

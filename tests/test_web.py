@@ -67,48 +67,20 @@ def test_api_coindcx_futures_catalog(test_app):
         assert sum(item["sector"] == "MEME" for item in catalog) >= 5
 
 
-def test_api_coins_serve_momentum_statistics(test_app):
-    from futurecast.publisher.multi_manager import MOMENTUM_SPEC
-
+def test_api_coins_serve_only_what_the_page_reads(test_app):
     with TestClient(test_app) as client:
         response = client.get("/api/coins")
         assert response.status_code == 200
         coins = response.json()
-        assert len(coins) >= 2
-
-        doge_coin = next((c for c in coins if "DOGE" in c["symbol"]), None)
-        assert doge_coin is not None
-        assert doge_coin["sector"] == "MEME"
-
-        assert any("SOL" in c["symbol"] for c in coins)
+        assert {c["symbol"] for c in coins} == {"B-DOGE_USDT", "B-SOL_USDT"}
+        assert next(c for c in coins if "DOGE" in c["symbol"])["sector"] == "MEME"
 
         for coin in coins:
-            # Offline mode computes on synthetic candles straight away
+            # Offline mode trains the baseline on synthetic candles straight away
             assert coin["has_data"] is True and coin["status"] == "ready"
             assert set(coin) == {"symbol", "sector", "has_data", "status", "progress", "error", "history",
-                                 "current_price", "momentum", "signals", "orderbook_depth"}
-
-            m = coin["momentum"]
-            assert m["round_trip_pct"] == pytest.approx(MOMENTUM_SPEC.round_trip_pct)
-            assert set(m["horizons"]) == {h.name for h in MOMENTUM_SPEC.horizons}
-            for name, h in m["horizons"].items():
-                assert h["signal"] in ("LONG", "SHORT", "NEUTRAL")
-                assert h["reason"] in ("flat", "few", "noise", "fees", "unstable", "edge")
-                assert (h["signal"] != "NEUTRAL") == (h["reason"] == "edge")
-                assert isinstance(h["z"], float) and 0 <= h["percentile"] <= 100
-                a = h["after"]
-                assert a["ci_low_pct"] <= a["mean_pct"] <= a["ci_high_pct"]
-                assert 1 <= a["bucket"] <= a["buckets"] == MOMENTUM_SPEC.quantiles
-                assert h["persistence"]["character"] in ("trending", "mean_reverting", "random")
-                assert 0 < h["flow"]["buy_pct"] < 100
-                assert h["versus"]["symbol"] == "B-BTC_USDT"  # DOGE and SOL lead their sectors
-
-            s = coin["signals"]
-            assert 0 <= s["rsi"]["15m"] <= 100 and 0 <= s["rsi"]["1h"] <= 100
-            assert s["ema"]["stack"] in ("up", "down", "mixed")
-            assert all(0 <= r["position"] <= 1 for r in s["ranges"].values() if r)
-            assert s["volatility"]["daily_pct"] > 0
-            assert s["funding"] is None  # synthetic candles carry no funding
+                                 "current_price", "tier", "tier_auto", "leverage", "overrides", "risk", "funding"}
+            assert set(coin["history"]) == {"5m", "15m", "1h"}
 
 
 def test_reload_endpoint(test_app):
@@ -130,14 +102,14 @@ def test_api_add_and_delete_coin(test_app):
         added = add_resp.json()
         assert added["symbol"] == "B-PEPE_USDT"
         assert added["sector"] == "MEME"
-        assert added["momentum"]["horizons"]["4h"]["versus"]["symbol"] == "B-DOGE_USDT"  # meme coins against DOGE
+        assert added["tier"] == "shitcoin"  # meme coins
 
-        # Add NFT token B-BLUR_USDT: statistics straight away, nothing to train
+        # Add NFT token B-BLUR_USDT: offline, readings straight away
         blur_resp = client.post("/api/coins", json={"symbol": "B-BLUR_USDT"})
         assert blur_resp.status_code == 200
         blur_added = blur_resp.json()
         assert blur_added["symbol"] == "B-BLUR_USDT"
-        assert blur_added["status"] == "ready" and "4h" in blur_added["momentum"]["horizons"]
+        assert blur_added["status"] == "ready" and "4h" in blur_added["risk"]["windows"]
 
         # Check it is in active list
         get_resp = client.get("/api/coins")
@@ -193,9 +165,10 @@ def test_tracked_coins_persistence_across_app_reboots(tmp_path):
         assert storage_file.exists()
         with open(storage_file, "r") as f:
             saved_data = json.load(f)
-        assert "B-TRUTH_USDT" in saved_data["symbols"]
-        assert "B-DOGE_USDT" in saved_data["symbols"]
-        assert "B-SOL_USDT" in saved_data["symbols"]
+        saved = [c["symbol"] for c in saved_data["symbols"]]
+        assert "B-TRUTH_USDT" in saved
+        assert "B-DOGE_USDT" in saved
+        assert "B-SOL_USDT" in saved
 
     # 2. Simulate closing the app, then starting App 2 WITHOUT specifying initial_symbols
     # It must restore exactly what was saved previously
@@ -246,3 +219,65 @@ def test_watchlist_starts_empty_without_default_coins(tmp_path):
 
     with TestClient(create_app(live_mode=False, persistence_path=storage_file)) as client:
         assert client.get("/api/coins").json() == []
+
+
+def test_api_coins_serve_risk_readings(test_app):
+    from futurecast.stats.regime import WINDOWS
+
+    with TestClient(test_app) as client:
+        coins = {c["symbol"]: c for c in client.get("/api/coins").json()}
+        doge, sol = coins["B-DOGE_USDT"], coins["B-SOL_USDT"]
+        assert (doge["tier"], doge["leverage"]) == ("shitcoin", 3.0)  # meme sector
+        assert (sol["tier"], sol["leverage"]) == ("megacap", 20.0)
+        assert sol["overrides"] == {"tier": None, "leverage": None}
+        risk = sol["risk"]
+        assert risk["stop_pct"] == 5.0 and risk["mmr"] == 0.004 and risk["trained_at"]
+        assert set(risk["windows"]) == {w.name for w in WINDOWS}
+        for name, w in risk["windows"].items():
+            assert w["state"] in ("trending", "choppy", "quiet", "wild")
+            assert w["momentum_label"] in ("bullish", "bearish", "neutral") and -100 <= w["momentum"] <= 100
+            assert w["volatility"] in ("calm", "normal", "high", "wild")
+            rec = w["trend_record"]
+            assert rec["base"]["n"] > 0 and rec["round_trip_pct"] == pytest.approx(0.177)
+            assert set(rec) == {"long", "short", "base", "round_trip_pct"}
+            for side in ("long", "short"):
+                r = w[side]
+                assert r["model"] == "har"  # offline: the baseline only
+                assert r["score"] == round(100 * r["stop_hit_chance"])
+                assert r["bad_case_margin_pct"] == pytest.approx(20 * r["bad_case_pct"])
+                assert 0 <= r["liquidation_chance"] <= r["stop_hit_chance"] <= 1
+                assert isinstance(r["checked"], bool) and r["reason"]
+                q = r["quantiles"]
+                assert len(q["alphas"]) == len(q["moves_pct"]) and q["moves_pct"] == sorted(q["moves_pct"])
+        assert sol["funding"] is None  # synthetic candles carry no funding
+
+
+def test_tier_and_leverage_overrides_round_trip(tmp_path):
+    storage_file = tmp_path / "saved_coins.json"
+    with TestClient(create_app(initial_symbols=["B-SOL_USDT"], live_mode=False, persistence_path=storage_file)) as client:
+        before = client.get("/api/coins").json()[0]["risk"]["windows"]["1h"]["long"]
+        out = client.patch("/api/coins/B-SOL_USDT", json={"tier": "altcoin"}).json()
+        assert (out["tier"], out["tier_auto"], out["leverage"]) == ("altcoin", "megacap", 10.0)
+        after = out["risk"]["windows"]["1h"]["long"]
+        assert after["stop_hit_chance"] < before["stop_hit_chance"]  # 10x: the -5% stop is twice as far
+        out = client.patch("/api/coins/B-SOL_USDT", json={"leverage": 5}).json()
+        assert (out["tier"], out["leverage"], out["overrides"]) == ("altcoin", 5.0, {"tier": "altcoin", "leverage": 5.0})
+        assert client.patch("/api/coins/B-SOL_USDT", json={"tier": "moon"}).status_code == 400
+        assert client.patch("/api/coins/B-SOL_USDT", json={"leverage": 500}).status_code == 400
+        assert client.patch("/api/coins/B-NOPE_USDT", json={"leverage": 5}).status_code == 404
+
+    saved = json.loads(storage_file.read_text())["symbols"]
+    assert saved == [{"symbol": "B-SOL_USDT", "tier": "altcoin", "leverage": 5.0}]
+    with TestClient(create_app(live_mode=False, persistence_path=storage_file)) as client:
+        coin = client.get("/api/coins").json()[0]
+        assert (coin["tier"], coin["leverage"]) == ("altcoin", 5.0)
+        out = client.patch("/api/coins/B-SOL_USDT", json={"tier": None, "leverage": None}).json()
+        assert (out["tier"], out["leverage"]) == ("megacap", 20.0)
+
+
+def test_old_watchlist_format_still_loads(tmp_path):
+    storage_file = tmp_path / "saved_coins.json"
+    storage_file.write_text(json.dumps({"symbols": ["B-ETH_USDT", "b-sol_usdt"], "updated_at": "2026-10-01"}))
+    with TestClient(create_app(live_mode=False, persistence_path=storage_file)) as client:
+        assert [c["symbol"] for c in client.get("/api/coins").json()] == ["B-ETH_USDT", "B-SOL_USDT"]
+    assert json.loads(storage_file.read_text())["symbols"][0] == {"symbol": "B-ETH_USDT", "tier": None, "leverage": None}

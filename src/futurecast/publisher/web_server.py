@@ -1,4 +1,4 @@
-"""FastAPI web server for the momentum dashboard: REST for the watchlist, /ws for live updates."""
+"""FastAPI web server for the dashboard: REST for the watchlist and coin settings, /ws for live updates."""
 
 from __future__ import annotations
 
@@ -47,6 +47,13 @@ class AddCoinRequest(BaseModel):
     symbol: str
 
 
+class CoinSettingsRequest(BaseModel):
+    """Fields left out stay as they are; null goes back to the automatic tier or leverage."""
+
+    tier: Optional[str] = None
+    leverage: Optional[float] = None
+
+
 def create_app(
     initial_symbols: Optional[List[str]] = None,
     live_mode: bool = True,
@@ -85,7 +92,7 @@ def create_app(
 
     app = FastAPI(
         title="FutureCast",
-        description="Momentum statistics for CoinDCX futures (read-only)",
+        description="Intraday risk readings for CoinDCX futures (read-only)",
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
@@ -148,6 +155,24 @@ def create_app(
         if mgr.live:
             mgr.schedule_load(sym)
         return {"status": "load_queued" if mgr.live else "offline", "symbol": sym}
+
+    @app.patch("/api/coins/{symbol}")
+    async def update_coin(symbol: str, req: CoinSettingsRequest) -> Dict[str, Any]:
+        mgr: MultiCoinStreamManager = app.state.manager
+        sym = symbol.strip().upper()
+        worker = mgr.workers.get(sym)
+        if worker is None:
+            raise HTTPException(status_code=404, detail="Coin not tracked")
+        given = req.model_fields_set
+        tier = (req.tier.lower() if req.tier else None) if "tier" in given else worker.tier_override
+        leverage = req.leverage if "leverage" in given else worker.leverage_override
+        try:
+            mgr.set_overrides(sym, tier, leverage)
+        except ValueError as err:
+            raise HTTPException(status_code=400, detail=str(err))
+        item = worker.snapshot()
+        await mgr.broadcast({"type": "FORECAST_UPDATE", **item})
+        return item
 
     @app.delete("/api/coins/{symbol}")
     async def delete_coin(symbol: str) -> Dict[str, Any]:

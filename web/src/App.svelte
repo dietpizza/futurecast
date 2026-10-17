@@ -8,7 +8,7 @@
   import Watchlist from "./components/Watchlist.svelte";
 
   start();
-  // For previewing states from the console: futurecast.stopLive(), then edit futurecast.app.coins
+  // For previewing risk states from the console: futurecast.stopLive(), then edit futurecast.app.coins
   Object.assign(window, { futurecast: { app, stopLive } });
 
   // "/" or Ctrl/Cmd+K opens the add-pair drawer, Escape closes it

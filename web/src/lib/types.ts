@@ -1,79 +1,63 @@
 // The parts of the server's coin snapshot the page reads (SymbolWorker.snapshot in multi_manager.py).
-// Statistics are null or missing when the history can't support them.
+// Readings are null or missing when the history can't support them.
 
-export type Horizon = "1h" | "4h" | "1d" | "3d";
+export type WindowName = "5m" | "15m" | "30m" | "1h" | "2h" | "3h" | "4h" | "8h";
+export type Side = "long" | "short";
+export type Tier = "megacap" | "altcoin" | "shitcoin";
 
-export interface After {
-  bucket: number;
-  buckets: number;
-  z_low: number | null;
-  z_high: number | null;
-  n: number;
-  windows: number;
+export interface SideRisk {
+  model: "har" | "lgbm";
+  checked: boolean; // passed the walk-forward check (bad case exceeded in 7–13% of test windows)
+  coverage: number | null; // share of test windows worse than the bad case
+  bad_case_pct: number; // 1-in-10 adverse move within the window, price %
+  bad_case_margin_pct: number;
+  stop_hit_chance: number; // at the server's stop (risk.stop_pct), 0–1
+  liquidation_chance: number;
+  score: number | null; // stop-hit chance in %
+  reason: string;
+  quantiles: { alphas: number[]; moves_pct: number[] }; // adverse move quantiles, price %
+}
+
+export interface TrendOutcome {
+  n: number; // past readings with a known next window (they overlap)
+  win_rate: number | null; // share where the next window closed the call's way
+  mean_pct: number | null; // mean move the call's way over the next window, before fees
+}
+
+// What followed past trending readings on this coin (regime.trend_record), behind the Long / Short call
+export interface TrendRecord {
+  long: TrendOutcome;
+  short: TrendOutcome;
+  base: TrendOutcome; // every reading: the coin's plain drift
+  round_trip_pct: number;
+}
+
+export interface WindowRisk {
+  at: string;
+  swing_pct: number;
+  momentum: number | null; // −100..+100
+  momentum_label: "bullish" | "bearish" | "neutral" | null;
+  efficiency: number | null;
+  vol_pct: number | null;
+  volatility: "calm" | "normal" | "high" | "wild" | null;
+  state: "trending" | "choppy" | "quiet" | "wild" | null;
+  trend_record: TrendRecord | null;
+  long: SideRisk;
+  short: SideRisk;
+}
+
+export interface Risk {
+  stop_pct: number;
+  mmr: number;
+  trained_at: string | null;
+  windows: Partial<Record<WindowName, WindowRisk>>;
+}
+
+export interface Funding {
+  rate_pct: number;
   mean_pct: number;
-  median_pct: number;
-  hit_rate: number;
-  ci_low_pct: number;
-  ci_high_pct: number;
-  older_mean_pct: number;
-  newer_mean_pct: number;
-  all_mean_pct: number;
-  all_hit_rate: number;
-}
-
-export interface Persistence {
-  character?: "trending" | "mean_reverting" | "random" | null;
-  vr?: number;
-  vr_z?: number;
-  vr_p?: number;
-  ic?: number;
-  ic_t?: number;
-  ic_p?: number;
-}
-
-export interface HorizonStats {
-  candles: number;
-  interval: string;
-  as_of?: string;
-  return_pct: number;
-  z: number | null;
-  percentile: number;
-  typical_move_pct: number;
-  history_candles?: number;
-  after?: After | null;
-  persistence?: Persistence | null;
-  signal?: "LONG" | "SHORT" | "NEUTRAL";
-  reason?: "flat" | "few" | "noise" | "fees" | "unstable" | "edge";
-  kind?: "continuation" | "reversal" | null;
-  flow?: { buy_pct: number; percentile: number } | null;
-  versus?: { symbol: string; beta: number; return_pct: number; excess_pct: number } | null;
-}
-
-export interface Momentum {
-  vol_days?: number;
-  round_trip_pct?: number;
-  min_windows?: number;
-  horizons?: Partial<Record<Horizon, HorizonStats | null>>;
-}
-
-export interface Signals {
-  rsi?: Record<string, number | null>;
-  ema?: { interval: string; stack: "up" | "down" | "mixed"; vs_slowest_pct: number; ema: Record<string, number> } | null;
-  ranges?: Record<string, { position: number; low: number; high: number } | null>;
-  volatility?: { daily_pct: number; percentile: number } | null;
-  volume?: { last_24h_usd: number; typical_24h_usd: number; ratio: number } | null;
-  funding?: { rate_pct: number; percentile: number; days: number; mean_pct: number } | null;
-}
-
-export interface OrderBook {
-  available?: boolean;
-  bid_pct?: number;
-  ask_pct?: number;
-  bid_depth_usd?: number;
-  ask_depth_usd?: number;
-  book_imbalance_pct?: number;
-  near_imbalance_pct?: number;
-  spread_bps?: number;
+  percentile: number | null;
+  days: number;
 }
 
 export interface Progress {
@@ -89,14 +73,17 @@ export interface Coin {
   symbol: string;
   sector?: string;
   has_data?: boolean;
-  status?: "pending" | "queued" | "downloading" | "ready" | "failed";
+  status?: "pending" | "queued" | "downloading" | "training" | "ready" | "failed";
   progress?: Progress | null;
   error?: string | null;
   history?: Record<string, { candles: number; from: string | null }>;
   current_price?: number | null;
-  momentum?: Momentum | null;
-  signals?: Signals | null;
-  orderbook_depth?: OrderBook | null;
+  tier?: Tier;
+  tier_auto?: Tier;
+  leverage?: number;
+  overrides?: { tier: Tier | null; leverage: number | null };
+  risk?: Risk | null;
+  funding?: Funding | null;
 }
 
 export interface CatalogItem {

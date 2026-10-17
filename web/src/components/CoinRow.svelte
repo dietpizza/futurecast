@@ -1,27 +1,26 @@
 <script lang="ts">
   import { app, removeCoin, toggleExpanded } from "../lib/live.svelte";
-  import { coindcxUrl, formatNumber, formatPrice, formatUsdCompact, isNum, pct, pctile, pText, sectorLabel, signed, sp, splitSymbol, toneClass } from "../lib/format";
-  import { afterText, CHARACTER, characterText, hasMove, horizonOf, isBusy, loadingStage, moveText, signalVerdict, significant, waitingNote } from "../lib/momentum";
+  import { coindcxUrl, formatNumber, formatPrice, isNum, pctile, sectorLabel, sp, splitSymbol } from "../lib/format";
+  import { callOf, callRecordText, isBusy, loadingStage, MOMENTUM_LABELS, momentumText, STATE_LABELS, stateText, tierLabel, VOL_LABELS, volatilityText, waitingNote, windowOf } from "../lib/risk";
   import type { Coin } from "../lib/types";
   import CoinDetails from "./CoinDetails.svelte";
   import Icon from "./Icon.svelte";
+  import RiskCell from "./RiskCell.svelte";
 
   let { symbol, coin }: { symbol: string; coin: Coin } = $props();
 
-  // The small line under a cell's value, in the label red unless it leans one way
+  // The small line under a cell's value
   const SUB = "mt-0.5 text-[13px] whitespace-nowrap";
-  const VAL = "text-[15px] font-semibold tracking-[-0.01em] whitespace-nowrap";
+  const VAL = "text-[15px] font-semibold whitespace-nowrap";
 
-  const tf = $derived(app.timeframe);
+  const name = $derived(app.window);
   const open = $derived(Boolean(app.expanded[symbol]));
   const pair = $derived(splitSymbol(symbol));
-  const h = $derived(horizonOf(coin, tf));
-  const after = $derived(h?.after);
-  const persistence = $derived(h?.persistence);
-  const flow = $derived(h?.flow);
-  const book = $derived(coin.orderbook_depth || {});
-  const verdict = $derived(signalVerdict(coin, tf));
+  const w = $derived(windowOf(coin, name));
   const waiting = $derived(waitingNote(coin));
+  const call = $derived(w ? callOf(coin, w, name, app.stopPct) : null);
+  const funding = $derived(coin.funding);
+  const overridden = $derived(Boolean(coin.overrides?.tier || coin.overrides?.leverage));
   const detailsId = $derived(`details-${symbol.replace(/[^a-zA-Z0-9]/g, "_")}`);
 
   // Flash the price green or red when a stream update moves it; the key block restarts the animation
@@ -41,7 +40,7 @@
 
 {#snippet empty(note: string)}
   <span class="text-[15px] val-muted">—</span>
-  {#if note}<div class="{SUB} text-muted">{note}</div>{/if}
+  {#if note}<div class="{SUB} text-dim">{note}</div>{/if}
 {/snippet}
 
 <article class={["coin-row", open && "is-open"]} aria-label={pair.base}>
@@ -60,7 +59,13 @@
         {#if pair.quote}<span class="text-[13px] font-semibold text-faint">{pair.quote}</span>{/if}
       </div>
       <div class="{SUB} text-muted">
-        {sectorLabel(coin.sector)}{#if isBusy(coin)}{coin.sector ? " · " : ""}<span class="text-warn">{loadingStage(coin)}</span>{/if}
+        {#if isBusy(coin)}
+          <span class="text-warn">{loadingStage(coin)}</span>
+        {:else if coin.status === "failed"}
+          <span class="text-neg" data-tooltip-title="Download failed" data-tooltip={coin.error || ""}>Failed</span>
+        {:else}
+          {sectorLabel(coin.sector)}{#if coin.leverage}<span class="hidden max-md:inline">{` · ${coin.leverage}×`}</span>{/if}
+        {/if}
       </div>
     </div>
 
@@ -70,75 +75,85 @@
       {/key}
     </div>
 
-    <div class="c-signal">
-      {#if !coin.has_data}
-        {#if isBusy(coin)}
-          <span class="pill pill-warn">{loadingStage(coin)}</span>
-        {:else if coin.status === "failed"}
-          <span class="pill pill-neutral" data-tooltip-title="Download failed" data-tooltip={coin.error || ""}>Failed</span>
-        {:else}
-          <span class="pill pill-neutral">Loading</span>
-        {/if}
-      {:else}
-        <span class="pill {verdict.pill}" data-tooltip-title="{tf} momentum · {verdict.label}" data-tooltip={verdict.why}>{verdict.label}</span>
-      {/if}
-    </div>
-
-    <div class="c-move text-right tabular-nums" data-tooltip-title="Move · last {tf}" data-tooltip={hasMove(h) ? moveText(coin, h, tf) : null}>
-      {#if hasMove(h)}
-        <span class="{VAL} {Math.abs(h.z) >= 1 ? toneClass(h.return_pct) : 'val-flat'}">{sp(h.return_pct)}</span>
-        <div class="{SUB} text-muted">z {signed(h.z, 1)} · {pctile(h.percentile)} pct</div>
-      {:else}
-        {@render empty(waiting)}
-      {/if}
-    </div>
-
-    <div class="c-next text-right tabular-nums" data-tooltip-title="Next {tf} after similar moves" data-tooltip={after ? afterText(after, tf) : null}>
-      {#if after}
-        <span class="{VAL} {significant(after) ? toneClass(after.mean_pct, 2) : 'val-flat'}">{sp(after.mean_pct)}</span>
-        <div class="{SUB} text-muted">{pct(after.hit_rate)} up · {significant(after) ? "significant" : "noise"}</div>
-      {:else}
-        {@render empty(waiting)}
-      {/if}
-    </div>
-
-    <div class="c-char max-md:hidden" data-tooltip-title="Character · {tf}" data-tooltip={h && persistence?.character ? characterText(h, tf) : null}>
-      {#if persistence?.character}
-        <span class="text-[15px] font-semibold whitespace-nowrap {persistence.character === 'random' ? 'val-flat' : ''}">{CHARACTER[persistence.character].label}</span>
-        <div class="{SUB} text-muted">VR {formatNumber(persistence.vr, 2)} · {pText(persistence.vr_p)}</div>
+    <div class="c-call" data-tooltip-title={call ? `${call.label} · ${name}` : null} data-tooltip={call && w ? `${call.why}\n\n${callRecordText(w, call, name)}`.trim() : null}>
+      {#if call}
+        <span class="call call-{call.call}">{call.label}</span>
       {:else}
         {@render empty(waiting)}
       {/if}
     </div>
 
     <div
-      class="c-flow"
-      data-tooltip-title="Taker flow · last {tf}"
-      data-tooltip={flow ? `Market buys took ${formatNumber(flow.buy_pct, 1)}% of the traded value over the last ${tf} (the rest were market sells): more buying than ${formatNumber(flow.percentile, 0)}% of past ${tf} windows.` : null}
+      class="c-tier max-md:hidden"
+      data-tooltip-title="Tier and leverage"
+      data-tooltip={overridden
+        ? `Set by you (automatic: ${tierLabel(coin.tier_auto)}). Change it in the open row.`
+        : "Automatic from the coin and its 24h volume. Change it in the open row."}
     >
-      {#if flow}
-        <div class="book-bar"><span style:width="{Math.max(5, Math.min(95, flow.buy_pct))}%"></span><span></span></div>
-        <div class="{SUB} {flow.percentile >= 80 ? 'val-pos' : flow.percentile <= 20 ? 'val-neg' : 'text-muted'}">{formatNumber(flow.buy_pct, 0)}% buys · {pctile(flow.percentile)} pct</div>
+      <span class={VAL}>{coin.leverage ? `${coin.leverage}×` : "—"}{#if overridden}<span class="text-accent-text">*</span>{/if}</span>
+      <div class="{SUB} text-muted">{tierLabel(coin.tier)}</div>
+    </div>
+
+    <div class="c-long group-start text-right">
+      {#if w}<RiskCell {coin} {w} side="long" {name} />{:else}{@render empty(waiting)}{/if}
+    </div>
+
+    <div class="c-short text-right">
+      {#if w}<RiskCell {coin} {w} side="short" {name} />{:else}{@render empty(waiting)}{/if}
+    </div>
+
+    <div class="c-mom group-start max-md:hidden" data-tooltip-title="Momentum · {name}" data-tooltip={w ? momentumText(name) : null}>
+      {#if w && isNum(w.momentum) && w.momentum_label}
+        {@const m = w.momentum}
+        <div class="flex items-baseline gap-2">
+          <span class="{VAL} {w.momentum_label === 'bullish' ? 'val-pos' : w.momentum_label === 'bearish' ? 'val-neg' : 'val-flat'}">{MOMENTUM_LABELS[w.momentum_label]}</span>
+          <span class="text-[13px] text-dim tabular-nums">{m > 0 ? "+" : m < 0 ? "−" : ""}{Math.abs(Math.round(m))}</span>
+        </div>
+        <div class="mom-bar mt-1.5">
+          <span
+            class={m >= 0 ? "bg-pos-fill" : "bg-neg-fill"}
+            style:left={m >= 0 ? "50%" : `${50 + m / 2}%`}
+            style:width="{Math.abs(m) / 2}%"
+          ></span>
+        </div>
       {:else}
-        <div class="book-bar is-empty"></div>
-        <div class="{SUB} text-muted">{waiting || "No volume data"}</div>
+        {@render empty(waiting)}
+      {/if}
+    </div>
+
+    <div class="c-state max-md:hidden" data-tooltip-title="Market state · {name}" data-tooltip={w ? stateText(w, name) : null}>
+      {#if w?.state}
+        <span class="{VAL} {w.state === 'wild' ? 'val-warn' : 'val-flat'}">{STATE_LABELS[w.state]}</span>
+        <div class="{SUB} text-dim">eff {isNum(w.efficiency) ? Math.round(w.efficiency * 100) : "—"}%</div>
+      {:else}
+        {@render empty(waiting)}
+      {/if}
+    </div>
+
+    <div class="c-vol max-md:hidden" data-tooltip-title="Volatility · {name}" data-tooltip={w ? volatilityText(w, name) : null}>
+      {#if w?.volatility}
+        <span class="{VAL} {w.volatility === 'wild' ? 'val-warn' : 'val-flat'}">{VOL_LABELS[w.volatility]}</span>
+        <div class="{SUB} text-dim">{pctile(w.vol_pct)} pct</div>
+      {:else}
+        {@render empty(waiting)}
       {/if}
     </div>
 
     <div
-      class="c-book max-lg:hidden"
-      data-tooltip-title="Order book · top 20 levels"
-      data-tooltip={isNum(book.bid_pct) && book.available !== false
-        ? `Bids ${formatUsdCompact(book.bid_depth_usd)} · ${book.bid_pct}%\nAsks ${formatUsdCompact(book.ask_depth_usd)} · ${book.ask_pct}%\nSpread ${formatNumber(book.spread_bps, 1)} bps`
+      class="c-fund max-lg:hidden"
+      data-tooltip-title="Funding"
+      data-tooltip={funding
+        ? `The latest settled funding rate (longs pay shorts when positive), ${pctile(funding.percentile)} percentile of the last ${funding.days} days. Mean ${sp(funding.mean_pct, 4)}.`
         : null}
     >
-      {#if isNum(book.bid_pct) && book.available !== false}
-        {@const imbalance = book.book_imbalance_pct || 0}
-        <div class="book-bar"><span style:width="{book.bid_pct}%"></span><span></span></div>
-        <div class="{SUB} {imbalance >= 12 ? 'val-pos' : imbalance <= -12 ? 'val-neg' : 'text-muted'}">{book.bid_pct}% bids</div>
+      {#if funding}
+        {@const p = funding.percentile}
+        <span class="{VAL} val-flat tabular-nums">{sp(funding.rate_pct, 4)}</span>
+        <div class="{SUB} {isNum(p) && (p >= 90 || p <= 10) ? 'val-warn' : 'text-dim'}">
+          {isNum(p) && p >= 90 ? "longs crowded" : isNum(p) && p <= 10 ? "shorts crowded" : `${pctile(p)} pct`}
+        </div>
       {:else}
-        <div class="book-bar is-empty"></div>
-        <div class="{SUB} text-muted">No book data</div>
+        {@render empty(coin.has_data ? "no data" : waiting)}
       {/if}
     </div>
 
@@ -254,30 +269,27 @@
     border-top: 1px solid var(--rule);
   }
 
-  /* Phones: pair and price on top, signal and the two momentum numbers below */
+  /* Phones: pair, call and price on top, the two risks below */
   @media (width < 720px) {
     .row-main {
       grid-template-columns: 1fr auto auto auto;
       grid-template-areas:
-        "pair   pair  price  actions"
-        "signal move  next   actions";
-      column-gap: 14px;
-      row-gap: 8px;
+        "pair call  price actions"
+        "long long  short actions";
+      column-gap: 12px;
+      row-gap: 10px;
       padding: 12px 8px 12px 16px;
     }
     .c-pair { grid-area: pair; }
     .c-price { grid-area: price; }
-    .c-signal { grid-area: signal; display: flex; align-items: center; }
-    .c-move { grid-area: move; }
-    .c-next { grid-area: next; }
+    .c-call { grid-area: call; }
+    .c-long { grid-area: long; box-shadow: none; padding-left: 0; }
+    .c-short { grid-area: short; }
     .c-actions { grid-area: actions; flex-direction: column; justify-content: center; }
-    .c-move::before { content: "Move "; }
-    .c-next::before { content: "Next "; }
-    .c-move::before,
-    .c-next::before { font-size: 12px; color: var(--text-muted); }
-    .c-char,
-    .c-flow,
-    .c-book,
+    .c-long::before { content: "Long risk"; }
+    .c-short::before { content: "Short risk"; }
+    .c-long::before,
+    .c-short::before { display: block; font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
     .btn-remove { display: none; }
 
     .row-details { padding: 4px 12px 16px; }

@@ -1,6 +1,6 @@
 """Binance USD-M futures public market data (Strictly Read-Only / Public Endpoints).
 
-Every candle, funding rate, live price and order book for a CoinDCX pair comes from the
+Every candle, funding rate and live price for a CoinDCX pair comes from the
 Binance perpetual behind it: B-SOL_USDT -> SOLUSDT, B-1000PEPE_USDT -> 1000PEPEUSDT.
 Zero API keys or trading credentials required.
 """
@@ -18,7 +18,7 @@ import httpx
 import numpy as np
 import pandas as pd
 
-from futurecast.ingestion.cache import CandleCache
+from futurecast.ingestion.cache import CandleCache, FundingCache
 from futurecast.ingestion.factory import extract_base_and_quote
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,6 @@ _PERPETUAL_TYPES = ("PERPETUAL", "TRADIFI_PERPETUAL")  # TRADIFI: gold, oil, ...
 # Binance lists some low-priced coins per 1000 / 1M units (1000PEPEUSDT, 1MBABYDOGEUSDT)
 _UNIT_PREFIXES: Tuple[Tuple[str, int], ...] = (("", 1), ("1000", 1_000), ("1000000", 1_000_000), ("1M", 1_000_000))
 _KLINE_PAGE = 1000  # klines weight is 5 up to 1000 rows, 10 above: 1000-row pages are cheapest per candle
-_DEPTH_LIMITS = (5, 10, 20, 50, 100, 500, 1000)
 _WEIGHT_LIMIT_1M = 2400
 _FUNDING_PAGE = 1000
 _FUNDING_LIMIT_5M = 500  # fundingRate has its own budget, outside the weight count: 500 requests / 5 min / IP
@@ -80,6 +79,7 @@ class BinancePublicClient:
         weight_budget: int = int(_WEIGHT_LIMIT_1M * 0.8),
         funding_budget: int = int(_FUNDING_LIMIT_5M * 0.8),
         candle_cache: Optional[CandleCache] = None,
+        funding_cache: Optional[FundingCache] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
@@ -96,6 +96,7 @@ class BinancePublicClient:
         # Binance symbol -> (covered from ms, downloaded at ms, events with columns time, funding_rate)
         self._funding: Dict[str, Tuple[int, int, pd.DataFrame]] = {}
         self.candle_cache = candle_cache
+        self.funding_cache = funding_cache
 
     @property
     def client(self) -> httpx.Client:
@@ -174,7 +175,7 @@ class BinancePublicClient:
             logger.warning(f"No trading Binance perpetual found for {symbol}")
         return market
 
-    # ───────── live price & order book ─────────
+    # ───────── live price ─────────
 
     def fetch_live_prices(self, symbols: Iterable[str]) -> Dict[str, float]:
         """Last traded price per pair from one all-symbol ticker call, in the pair's own units."""
@@ -190,23 +191,6 @@ class BinancePublicClient:
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as err:
             logger.debug(f"Binance live prices failed: {err}")
             return {}
-
-    def fetch_orderbook_depth(self, symbol: str, limit: int = 20) -> Dict[str, Any]:
-        """Level-2 order book of the pair's Binance perpetual, best levels first, in the pair's units
-        (empty sides when Binance has no market for the pair)."""
-        market = self._require(symbol)
-        if market is None:
-            return {"bids": [], "asks": []}
-        depth_limit = next((n for n in _DEPTH_LIMITS if n >= limit), _DEPTH_LIMITS[-1])
-        data = self._get("/fapi/v1/depth", {"symbol": market.symbol, "limit": depth_limit})
-        m = market.multiplier
-        levels = {
-            side: [(float(p) / m, float(q) * m) for p, q in data.get(side, [])]
-            for side in ("bids", "asks")
-        }
-        levels["bids"].sort(key=lambda x: x[0], reverse=True)
-        levels["asks"].sort(key=lambda x: x[0])
-        return {side: levels[side][:limit] for side in ("bids", "asks")}
 
     # ───────── funding rates ─────────
 
@@ -230,7 +214,8 @@ class BinancePublicClient:
         a 1000x listing pays the same rate). `start_ms` is rounded down to a UTC day so nearby
         requests share a download. A download is reused while it was made at or after `end_ms`
         (default: now), since no settlement before `end_ms` can be missing from it; otherwise only
-        the settlements after the newest one held are fetched.
+        the settlements after the newest one held are fetched. With a `funding_cache`, downloads
+        are kept on disk too, so a restarted app starts from them.
         """
         empty = pd.DataFrame(columns=["timestamp", "funding_rate"])
         market = self._require(symbol)
@@ -242,6 +227,11 @@ class BinancePublicClient:
 
         with self._funding_lock:
             cached = self._funding.get(market.symbol)
+        if cached is None and self.funding_cache is not None:
+            cached = self.funding_cache.load(market.symbol)
+            if cached is not None:
+                with self._funding_lock:
+                    self._funding.setdefault(market.symbol, cached)
         if cached is None or cached[0] > start_ms:
             cached = (start_ms, 0, pd.DataFrame({"time": pd.Series(dtype="int64"), "funding_rate": pd.Series(dtype=float)}))
         covered_from, fetched_at, events = cached
@@ -266,6 +256,8 @@ class BinancePublicClient:
                 events = events.drop_duplicates("time").sort_values("time").reset_index(drop=True)
             with self._funding_lock:
                 self._funding[market.symbol] = (covered_from, now_ms, events)
+            if self.funding_cache is not None:
+                self.funding_cache.store(market.symbol, covered_from, now_ms, events)
 
         events = events[(events["time"] >= start_ms) & (events["time"] <= end_ms)]
         if events.empty:

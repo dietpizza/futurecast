@@ -1,6 +1,5 @@
-"""Momentum statistics and supporting signals on closed candles (no fitted models)."""
+"""Risk models, momentum and market-state rules, and the funding reading on closed candles."""
 
-from futurecast.stats.momentum import MomentumSpec, momentum_view
-from futurecast.stats.signals import signals_view
+from futurecast.stats.signals import funding_view
 
-__all__ = ["MomentumSpec", "momentum_view", "signals_view"]
+__all__ = ["funding_view"]

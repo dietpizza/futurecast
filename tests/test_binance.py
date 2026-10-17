@@ -1,4 +1,4 @@
-"""Tests for the Binance market data client: CoinDCX pair mapping, candles, prices, order book."""
+"""Tests for the Binance market data client: CoinDCX pair mapping, candles, prices."""
 
 from typing import List
 
@@ -61,9 +61,6 @@ class FakeBinance:
         if request.url.path == "/fapi/v2/ticker/price":
             return httpx.Response(200, json=[{"symbol": "SOLUSDT", "price": "150.5"},
                                              {"symbol": "1000PEPEUSDT", "price": "0.004"}])
-        if request.url.path == "/fapi/v1/depth":
-            return httpx.Response(200, json={"E": 123, "bids": [["0.0039", "10"], ["0.0040", "5"]],
-                                             "asks": [["0.0042", "7"], ["0.0041", "3"]]})
         return httpx.Response(404)
 
     def count(self, path: str) -> int:
@@ -193,19 +190,6 @@ def test_live_prices_in_pair_units() -> None:
     assert prices["B-1000PEPE_USDT"] == 0.004
     assert prices["B-PEPE_USDT"] == pytest.approx(0.000004)
     assert "B-NOPE_USDT" not in prices
-
-
-def test_orderbook_sorted_and_scaled() -> None:
-    client = _client(FakeBinance())
-
-    book = client.fetch_orderbook_depth("B-1000PEPE_USDT", limit=20)
-    assert book["bids"] == [(0.0040, 5.0), (0.0039, 10.0)]
-    assert book["asks"] == [(0.0041, 3.0), (0.0042, 7.0)]
-
-    scaled = client.fetch_orderbook_depth("B-PEPE_USDT", limit=1)
-    assert scaled["bids"][0] == pytest.approx((0.0040 / 1000, 5_000.0))
-
-    assert client.fetch_orderbook_depth("B-NOPE_USDT") == {"bids": [], "asks": []}
 
 
 def test_rate_limit_is_retried() -> None:

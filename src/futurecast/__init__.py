@@ -1,4 +1,4 @@
-"""futurecast: a read-only momentum statistics dashboard for CoinDCX futures, plus a backtest of setup rules."""
+"""futurecast: a read-only intraday risk dashboard for CoinDCX futures, plus a backtest of setup rules."""
 
 from futurecast.cli import main
 

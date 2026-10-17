@@ -98,8 +98,8 @@ def clock(monkeypatch) -> Clock:
     return c
 
 
-def _client(fake: FakeBinance) -> BinancePublicClient:
-    client = BinancePublicClient()
+def _client(fake: FakeBinance, **kwargs) -> BinancePublicClient:
+    client = BinancePublicClient(**kwargs)
     client._client = httpx.Client(base_url=binance.BINANCE_FAPI_URL, transport=httpx.MockTransport(fake))
     return client
 
@@ -134,6 +134,31 @@ def test_funding_rates_page_forward_and_reuse_downloads(clock) -> None:
     assert events["timestamp"].iloc[-1].value // 1_000_000 == expected[-1] + HOUR
 
 
+def test_funding_downloads_survive_a_restart(clock, tmp_path) -> None:
+    from futurecast.ingestion.cache import FundingCache
+
+    fake = FakeBinance(clock, funding_hours=1)
+    start = NOW - 50 * DAY
+    first = _client(fake, funding_cache=FundingCache(tmp_path / "funding")).fetch_funding_rates(SYMBOL, start)
+    assert len(fake.funding_calls()) == 2 and (tmp_path / "funding" / "SOLUSDT.parquet").exists()
+
+    # A new client (a restarted app) at the same moment reads the file and downloads nothing
+    restarted = _client(fake, funding_cache=FundingCache(tmp_path / "funding"))
+    pd.testing.assert_frame_equal(restarted.fetch_funding_rates(SYMBOL, start), first)
+    assert len(fake.funding_calls()) == 2
+
+    # An hour later it fetches only the settlement since
+    clock.now_ms += HOUR
+    later = _client(fake, funding_cache=FundingCache(tmp_path / "funding")).fetch_funding_rates(SYMBOL, start)
+    assert len(fake.funding_calls()) == 3 and len(later) == len(first) + 1
+    assert int(fake.funding_calls()[-1].url.params["startTime"]) == first["timestamp"].iloc[-1].value // 1_000_000 + 1
+
+    # A request reaching further back than the file covers downloads again from there
+    _client(fake, funding_cache=FundingCache(tmp_path / "funding")).fetch_funding_rates(SYMBOL, start - 30 * DAY)
+    older = [int(r.url.params["startTime"]) for r in fake.funding_calls()[3:]]
+    assert older[0] == (start - 30 * DAY) // DAY * DAY
+
+
 def test_funding_requests_stay_within_their_own_budget(clock) -> None:
     client = BinancePublicClient(funding_budget=2)
     for _ in range(3):
@@ -157,27 +182,31 @@ def test_candles_carry_the_rate_settled_before_they_closed(clock) -> None:
     assert close.iloc[-1] == SETTLE
 
 
-def test_history_and_live_candles_carry_the_settled_funding_rate(clock) -> None:
+def test_history_and_live_candles_carry_the_settled_funding_rate(clock, monkeypatch) -> None:
     fake = FakeBinance(clock)
     client = _client(fake)
     worker = _worker()
     bench = worker.benchmark
+    train = SymbolWorker.train
+    monkeypatch.setattr(SymbolWorker, "train", lambda self, lgbm=True, progress=False: train(self, False, progress))
 
     worker.load_history(client)
 
-    assert worker.status == "ready"
+    assert worker.status == "ready" and worker.progress is None
+    assert worker.risk_view["8h"]["long"]["model"] == "har"  # trained after the download (baseline only here)
+    funding_pct = worker.risk.windows["1h"].funding_pct
+    assert funding_pct is not None and 0 <= funding_pct <= 100
     hourly = worker.candles["1h"]
     assert f"{SYMBOL}_funding_rate" in hourly and f"{bench}_funding_rate" not in hourly
     assert f"{SYMBOL}_funding_rate" not in worker.candles["15m"]  # only the coin's, only where it is read
     # The candle closing at the settlement still carries the previous rate
-    assert worker.signals["funding"]["rate_pct"] == pytest.approx(100 * rate("SOLUSDT", SETTLE - 8 * HOUR))
-    assert set(worker.momentum["horizons"]) == {"1h", "4h", "1d", "3d"}
+    assert worker.funding["rate_pct"] == pytest.approx(100 * rate("SOLUSDT", SETTLE - 8 * HOUR))
 
     # An hour later both charts gain a candle; the new hourly one carries the new rate, fetched incrementally
     clock.now_ms += HOUR
     before = len(fake.funding_calls())
     assert worker.refresh_candles(client, now=pd.Timestamp(clock.now_ms, unit="ms", tz="UTC")) == list(CHART_MINUTES)
-    assert worker.signals["funding"]["rate_pct"] == pytest.approx(100 * rate("SOLUSDT", SETTLE))
+    assert worker.funding["rate_pct"] == pytest.approx(100 * rate("SOLUSDT", SETTLE))
     new_calls = fake.funding_calls()[before:]
     assert len(new_calls) == 1 and int(new_calls[0].url.params["startTime"]) > SETTLE - 8 * HOUR
 
@@ -186,5 +215,5 @@ def test_offline_candles_need_no_funding_download() -> None:
     worker = _worker()
     worker.load_synthetic()
 
-    assert worker.signals["funding"] is None
-    assert worker.momentum["horizons"]["4h"]["z"] is not None
+    assert worker.funding is None
+    assert worker.risk_view["4h"]["long"]["score"] is not None

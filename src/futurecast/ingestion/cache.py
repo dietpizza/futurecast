@@ -1,4 +1,4 @@
-"""Disk cache of downloaded closed candles."""
+"""Disk caches of downloaded closed candles and settled funding rates."""
 
 from __future__ import annotations
 
@@ -97,3 +97,58 @@ class CandleCache:
             except Exception as err:
                 tmp.unlink(missing_ok=True)
                 logger.warning(f"Could not write candle cache {path}: {err}")
+
+
+class FundingCache:
+    """Settled funding rates already downloaded, one Parquet file per Binance market.
+
+    A file holds every settlement from `covered_from` (ms) on, as known at `fetched_at` (ms): no
+    settlement before `fetched_at` can be missing, so after a restart only the ones since need
+    downloading (BinancePublicClient.fetch_funding_rates).
+    """
+
+    _locks: ClassVar[Dict[Path, threading.Lock]] = {}
+    _locks_guard: ClassVar[threading.Lock] = threading.Lock()
+
+    def __init__(self, cache_dir: str | Path = "cache/funding") -> None:
+        self.cache_dir = resolve(cache_dir)
+
+    def _path(self, market: str) -> Path:
+        return self.cache_dir / f"{market.upper()}.parquet"
+
+    def _lock(self, path: Path) -> threading.Lock:
+        with self._locks_guard:
+            return self._locks.setdefault(path, threading.Lock())
+
+    def load(self, market: str) -> Optional[Tuple[int, int, pd.DataFrame]]:
+        """(covered_from, fetched_at, events with columns time and funding_rate), or None."""
+        path = self._path(market)
+        with self._lock(path):
+            if not path.exists():
+                return None
+            try:
+                table = pq.read_table(path)
+                meta = table.schema.metadata or {}
+                events = table.to_pandas()[["time", "funding_rate"]]
+                return int(meta[b"covered_from"]), int(meta[b"fetched_at"]), events
+            except Exception as err:
+                logger.warning(f"Ignoring unreadable funding cache {path}: {err}")
+                return None
+
+    def store(self, market: str, covered_from: int, fetched_at: int, events: pd.DataFrame) -> None:
+        path = self._path(market)
+        with self._lock(path):
+            table = pa.Table.from_pandas(events[["time", "funding_rate"]].reset_index(drop=True), preserve_index=False)
+            table = table.replace_schema_metadata({
+                **(table.schema.metadata or {}),
+                b"covered_from": str(int(covered_from)).encode(),
+                b"fetched_at": str(int(fetched_at)).encode(),
+            })
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+            try:
+                pq.write_table(table, tmp, compression="zstd")
+                os.replace(tmp, path)
+            except Exception as err:
+                tmp.unlink(missing_ok=True)
+                logger.warning(f"Could not write funding cache {path}: {err}")

@@ -65,7 +65,7 @@
         class="caps group inline-flex items-center gap-2 text-[13px] font-semibold text-muted data-[state=live]:text-pos"
         data-state={app.connection}
         data-tooltip-title="Live data feed"
-        data-tooltip="Real-time price and order book stream from the exchange."
+        data-tooltip="Live prices and risk readings streamed from the backend."
       >
         <span
           class="size-[7px] bg-faint group-data-[state=live]:bg-pos-fill group-data-[state=live]:shadow-[0_0_8px_var(--pos-fill)] group-data-[state=reconnecting]:animate-[blink_1s_ease-in-out_infinite] group-data-[state=reconnecting]:bg-warn"

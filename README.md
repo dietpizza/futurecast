@@ -1,20 +1,21 @@
 # futurecast ⚡
 
-A local, read-only **web dashboard for CoinDCX futures** that runs plain statistics on each coin's
-price momentum. No models are trained. For every coin you add, at four horizons (1h · 4h · 1d · 3d), it shows:
+A local, read-only **web dashboard for CoinDCX futures** that answers one question for intraday
+trading: *if I open a long or a short on this coin right now, how badly can it hurt me before I close it?*
+For every coin you add, at eight holding windows (5m · 15m · 30m · 1h · 2h · 3h · 4h · 8h), it shows:
 
-- the **last move** in volatility units (z) and its percentile among every past move of that length,
-- **what followed similar moves** on this coin: the next window's average return, how often it rose,
-  and a 95% range for that average that allows for the overlap between windows,
-- whether the coin's price **trends or mean-reverts** at that horizon (variance-ratio test) and the
-  correlation between each move and the next,
-- a **Long / Short signal** only when the average after similar moves beats a market round trip in
-  fees, its 95% range excludes zero, and it holds in both halves of the history,
-- **supporting signals**: taker flow, moves against the sector benchmark after taking out beta, RSI, the 1h
-  EMA 20/50/200 stack, position in the 24h / 7d / 30d range, realized volatility, volume against a
-  typical day, funding rate percentile, and the order book.
+- **Long risk** and **short risk**, 0–100: the chance in % that a position opened now hits your stop
+  within the window. The stop is a loss of margin (the PnL % CoinDCX shows, −5% to −10%), so it
+  depends on the coin's leverage: megacaps (BTC, ETH, SOL, BNB, XRP) 20×, shitcoins (meme coins, or
+  under $50M traded in 24h) 3×, other altcoins 10×, changeable per coin.
+- the **bad case**: the 1-in-10 adverse move within the window, as a price move and as a share of margin,
+  the **liquidation chance**, and the main reason behind the number;
+- **momentum** (bullish / bearish / neutral, −100..+100) and the **market state** (trending / choppy /
+  quiet / wild): rules describing what has happened, not forecasts;
+- **volatility** (calm / normal / high / wild) and the **funding rate** (crowded longs or shorts).
 
-The `futurecast backtest` command also replays two rule-based setups (fair-value-gap setups and wedge
+The `futurecast risk` command prints the models' walk-forward check and today's readings for a coin.
+The `futurecast backtest` command replays two rule-based setups (fair-value-gap setups and wedge
 breakouts) on history. They are not on the dashboard.
 
 > It only reads public market data: there are no exchange keys and no code that places orders.
@@ -25,52 +26,62 @@ breakouts) on history. They are not on the dashboard.
 
 ```
 [ Binance USD-M Futures Public REST (Read-Only) ]
-  (closed 15m / 1h candles of the coin and its benchmark, the coin's settled
-   funding, live price, order book; candles cached on disk)
+  (closed 5m / 15m / 1h candles of the coin and its benchmark, the coin's
+   settled funding, live price; candles cached on disk)
                │
                ▼
    [ Alignment ]   coin and benchmark on one candle grid per chart
                │
                ▼
-   [ stats.momentum ]  z, event study, variance ratio, IC, signal   (per horizon)
-   [ stats.signals ]   RSI, EMA stack, ranges, volatility, volume, funding
+   [ stats.regime ]   momentum, efficiency, volatility percentile, state      (per window)
+   [ stats.risk ]     HAR volatility forecast, LightGBM quantiles, walk-forward
+                      check; trained on load and daily, scored on each close   (per window, side)
+   [ stats.signals ]  funding rate and its percentile
                │
                ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │      READ-ONLY WEB DASHBOARD (FastAPI + WebSocket, port 8000)          │
 │                                                                        │
 │  • Strictly NO Private Keys / NO Trading APIs                          │
-│  • Recomputed whenever a 15m or 1h candle closes                       │
+│  • Rescored whenever a 5m, 15m or 1h candle closes                     │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Momentum statistics
+## Risk readings
 
-Each horizon is a number of candles on one chart: 1h and 4h use 15-minute candles (180 days of
-history), 1d and 3d use hourly candles (2 years). Everything is computed on closed candles, in
-`src/futurecast/stats/momentum.py` and `stats/signals.py`.
+Windows 5m–1h use 5-minute candles (90 days of history), 2h–4h 15-minute candles (180 days), 8h hourly
+candles (2 years). Everything is computed on closed candles, in `src/futurecast/stats/risk.py` and
+`stats/regime.py`.
 
-- **Move:** z = the log return over the last h candles ÷ (σ √h), where σ is the standard deviation
-  of one-candle returns over the trailing 14 days. z is roughly standard normal under a random walk.
-- **After similar moves:** every past z goes into a fifth (quintile). For the fifth the latest move falls
-  in: the mean, median and share-up of the following h-candle return, and the same over every window
-  (the coin's drift). Windows start every candle, so they overlap; the 95% range of the mean uses
-  Hansen–Hodrick standard errors (autocovariances up to h − 1 lags), which are exact for that overlap.
-  The mean is also split into the older and newer half of the history.
-- **Persistence:** the Lo–MacKinlay variance ratio VR(h) with its heteroskedasticity-robust z
-  (above 1 trending, below 1 mean-reverting, p < 0.05 to count), and the correlation of z with the next
-  window's volatility-scaled return (IC) with an overlap-corrected t.
-- **Signal:** Long or Short when the latest move is outside the middle fifth and, after moves in its
-  fifth, the next window averaged more than a market round trip (2 × the 0.0885% CoinDCX taker fee
-  with GST), the 95% range excludes zero, both halves agree in sign, and at least 30 non-overlapping
-  windows stand behind it. A **continuation** follows the move; a **reversal** fades it.
+- **Adverse move:** for a long, how far the lowest low of the next window fell below the entry close;
+  for a short, how far the highest high rose above it. Wicks count.
+- **Swing unit:** a HAR volatility forecast (a regression of the next window's high–low volatility on
+  the last 1, 4, 24 and 96 windows' volatility). Adverse moves are modelled in units of this forecast,
+  so thousands of past windows, calm or wild, say something about today's 0.25% or 3% move.
+- **Models:** the baseline is the forecast times the past distribution of adverse moves in swing units.
+  LightGBM quantile regressions (10–97%) on ~20 inputs (volatility at several lengths, momentum,
+  efficiency, taker flow, range position, time of day and to the next funding, the funding rate and
+  its percentile, the benchmark's volatility) replace it for a window and side only where they cut
+  the out-of-sample pinball loss by at least 2%. Nothing predicts direction: earlier tests found the
+  next move's direction indistinguishable from chance, while its size is predictable because
+  volatility clusters.
+- **Check:** walk-forward, training on the first 60% of history and testing on four later blocks
+  with an 8h gap. The 1-in-10 bad case should be exceeded in about 10% of test windows; outside 7–13%
+  the page shows "—" instead of a number. Models are retrained once a day.
 
-The signal comes from an event study over the history on hand (the latest windows included), not
-from a backtest of trading it. On 17 October 2026 every horizon of BTC, ETH, SOL, BAT, INJ and DASH
-read "no edge": after moves like the latest ones, the averages were a few hundredths of a percent,
-inside their 95% ranges and mostly under the fees.
+```bash
+uv run futurecast risk B-SOL_USDT                       # every window, −5% stop, the tier's leverage
+uv run futurecast risk B-ETH_USDT --window 1h --stop 8 --leverage 10 --calibration
+```
+
+Results on 17 October 2026 (ETH, SOL, DASH, ZK, BTC; −5% stop at the tier's leverage): the baseline's
+bad case was exceeded in 7–13% of test windows in 77 of 80 window-sides, most of them within 9–11%.
+ZK's shorts at 2h–4h failed (13–15%: it pumped harder than its history said). LightGBM beat the baseline by 2% or more in
+9 of 80, by at most 3.7%. The predicted stop-hit chance matched what happened within about 2 points.
+At 20× with a −5% margin stop (a 0.25% price move), a BTC, ETH or SOL long or short hits the stop
+within 1h 35–58% of the time.
 
 ---
 
@@ -193,8 +204,11 @@ mise tasks          # build, check, test, dev:api, dev:web, start, install
 ```
 
 In the dashboard, add any CoinDCX futures pair (e.g. `B-DOGE_USDT`, `B-SOL_USDT`). A new coin's
-history downloads in the background, one coin at a time (the card shows the progress); from then on
-each candle is appended as it closes. All market data comes from the Binance perpetual
+history downloads in the background and its models train (a few seconds a coin); the next coin
+downloads while the previous one trains (the row shows the progress). After a restart within a day,
+cached candles and saved models make every coin ready in seconds; from then on each candle is appended as it closes and the readings are
+rescored. Pick the window and your stop at the top; open a row for every window and to change the
+coin's tier or leverage. All market data comes from the Binance perpetual
 behind the pair (`B-SOL_USDT` → `SOLUSDT`, `B-1000PEPE_USDT` → `1000PEPEUSDT`, INR pairs → their
 `USDT` perpetual, priced in USDT). The add-coin search lists every Binance crypto and commodity
 perpetual under its CoinDCX name; CoinDCX itself is never called.
@@ -203,8 +217,10 @@ Everything the app keeps lives in `~/.futurecast` (set `FUTURECAST_HOME` to use 
 
 | Path | Contents |
 |---|---|
-| `tracked_symbols.json` | Coins on the dashboard |
+| `tracked_symbols.json` | Coins on the dashboard, with any tier or leverage you set |
 | `cache/candles/` | Downloaded closed candles, so restarts and backtests only fetch new ones |
+| `cache/funding/` | Downloaded funding rates, likewise |
+| `cache/risk/` | Trained risk models per coin; a restart within a day reuses them instead of training again |
 | `config/assets.yaml` | Optional overrides of the defaults shown in this repo's `config/` |
 
 Older versions also kept `models/` and `logs/forecasts/` there; nothing reads them any more, so they
@@ -214,8 +230,8 @@ can be deleted.
 
 ### Sector Benchmarks
 
-Each coin's moves are compared with its sector's leader, after taking out beta. A coin is never its
-own benchmark.
+Each coin is downloaded with its sector's leader, whose volatility is one of the risk models' inputs.
+A coin is never its own benchmark.
 
 | Sector | Benchmark | Example coins |
 |---|---|---|

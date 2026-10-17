@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.143.0",
     "httpx>=0.28.1",
+    "lightgbm>=4.7.0",
     "numpy>=2.5.4",
     "pandas>=3.0.6",
     "pyarrow>=26.0.0",

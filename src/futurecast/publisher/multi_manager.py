@@ -1,12 +1,18 @@
-"""Multi-coin stream manager: closed candles in, momentum statistics and signals out.
+"""Multi-coin stream manager: closed candles in, risk readings, momentum and market state out.
 
-Every number comes from fully closed 15m and 1h candles of the Binance perpetual behind the
-CoinDCX pair, aligned with the coin's benchmark (BinancePublicClient.fetch_candle_history).
+Every number comes from fully closed 5m, 15m and 1h candles of the Binance perpetual behind the
+CoinDCX pair, aligned with the coin's benchmark (BinancePublicClient.fetch_candle_history; the benchmark's
+volatility is one of the risk models' inputs).
 A coin's history (HISTORY_BARS per chart) is downloaded in the background when it is added,
 one coin at a time; downloads are kept on disk (<home>/cache/candles), so a restart only fetches
-the candles that closed since. Afterwards the stream loop appends each candle as it closes and
-reruns the statistics (stats.momentum, stats.signals); between candles only the displayed price
-and the order book refresh. Nothing is trained.
+the candles that closed since. Then the risk models are trained per window (stats.risk.CoinRisk,
+with its walk-forward check; status "training"), and again once a day; they are saved under
+<home>/cache/risk, so a restart within a day reuses them. Downloads and training run on separate
+queues, one coin each: the next coin downloads while the previous one trains. Afterwards the stream loop
+appends each candle as it closes, rescores the windows on that chart (stats.risk, stats.regime) and
+rereads the funding rate (stats.signals); between candles only the displayed price refreshes.
+Risk readings are served for the coin's leverage (its tier's unless overridden) and DEFAULT_STOP_PCT;
+the page re-reads the quantiles for another stop.
 """
 
 from __future__ import annotations
@@ -23,25 +29,27 @@ import numpy as np
 import pandas as pd
 
 from futurecast.config import AppConfig, AssetsConfig, load_config
-from futurecast.features.orderbook import compute_orderbook_metrics
 from futurecast.features.setups import interval_minutes
 from futurecast.ingestion.binance import BinancePublicClient
-from futurecast.ingestion.cache import CandleCache
+from futurecast.ingestion.cache import CandleCache, FundingCache
 from futurecast.ingestion.factory import extract_base_and_quote, get_symbol_sector, resolve_benchmark
 from futurecast.ingestion.storage import align_cross_asset_data
 from futurecast.paths import resolve
-from futurecast.stats import MomentumSpec, momentum_view, signals_view
+from futurecast.stats import funding_view
+from futurecast.stats.risk import TIERS, CoinRisk, coin_tier, liquidation_move, load_models, save_models, stop_move
 
 logger = logging.getLogger(__name__)
 
-MOMENTUM_SPEC = MomentumSpec()
-CHART_MINUTES: Dict[str, int] = {iv: interval_minutes(iv) for iv in ("15m", "1h")}
-# History kept per chart: 180 days of 15m, 2 years of 1h. The event studies need it; the cache
-# makes it a one-off download.
-HISTORY_BARS: Dict[str, int] = {"15m": 17_280, "1h": 17_520}
+CHART_MINUTES: Dict[str, int] = {iv: interval_minutes(iv) for iv in ("5m", "15m", "1h")}
+# History kept per chart: 90 days of 5m, 180 days of 15m, 2 years of 1h. The risk models need it
+# (thousands of past windows per window length); the cache makes it a one-off download.
+HISTORY_BARS: Dict[str, int] = {"5m": 25_920, "15m": 17_280, "1h": 17_520}
 FUNDING_CHARTS = ("1h",)  # the coin's settled funding rate rides on these candles
 OFFLINE_BARS = 3_000
 CACHE_BARS = 120_000  # candles kept on disk per market and interval (backtests read the cache too)
+DEFAULT_STOP_PCT = 5.0  # stop loss in % of margin the readings are served for
+RETRAIN_HOURS = 24.0
+MAX_LEVERAGE = 125.0
 
 
 def _synthetic_candles(symbol: str, minutes: int, bars: int, rng: np.random.Generator) -> pd.DataFrame:
@@ -64,8 +72,9 @@ def _synthetic_candles(symbol: str, minutes: int, bars: int, rng: np.random.Gene
 def _binance_client(assets: AssetsConfig) -> BinancePublicClient:
     source, storage = assets.data_source, assets.storage
     cache = CandleCache(Path(storage.cache_dir) / "candles", max_rows=CACHE_BARS) if storage.use_cache else None
+    funding = FundingCache(Path(storage.cache_dir) / "funding") if storage.use_cache else None
     return BinancePublicClient(base_url=source.base_url, timeout=source.request_timeout_sec,
-                               max_retries=source.max_retries, candle_cache=cache)
+                               max_retries=source.max_retries, candle_cache=cache, funding_cache=funding)
 
 
 def _base(symbol: str) -> str:
@@ -90,7 +99,7 @@ def _json_safe(obj: Any) -> Any:
 class SymbolWorker:
     """Candle history and latest statistics for one coin.
 
-    `status`: "pending" (nothing loaded), "queued", "downloading", "ready" or "failed".
+    `status`: "pending" (nothing loaded), "queued", "downloading", "training", "ready" or "failed".
     """
 
     def __init__(self, symbol: str, benchmark: str, sector: str, config: AppConfig) -> None:
@@ -105,10 +114,45 @@ class SymbolWorker:
         self.progress: Optional[Dict[str, Any]] = None  # what the download is doing right now
         self.candles: Dict[str, pd.DataFrame] = {iv: pd.DataFrame() for iv in CHART_MINUTES}
         self.data_source: Optional[str] = None  # "binance:<market>"; a 1000x market's candles aren't in pair units
-        self.momentum: Dict[str, Any] = {}
-        self.signals: Dict[str, Any] = {}
+        self.funding: Optional[Dict[str, Any]] = None
         self.live_price: Optional[float] = None
-        self.orderbook: Dict[str, Any] = {}
+        self.risk: Optional[CoinRisk] = None
+        self.risk_view: Dict[str, Any] = {}
+        self.tier_override: Optional[str] = None
+        self.leverage_override: Optional[float] = None
+
+    # ───────── tier and leverage ─────────
+
+    @property
+    def volume_24h(self) -> Optional[float]:
+        """Quote volume of the last 24 closed hours (Binance perpetual), None before the history loads."""
+        hourly = self.candles.get("1h")
+        col = f"{self.symbol}_quote_volume"
+        if hourly is None or hourly.empty or col not in hourly:
+            return None
+        return float(hourly[col].tail(24).sum())
+
+    @property
+    def tier_auto(self) -> str:
+        return coin_tier(self.symbol, self.volume_24h)
+
+    @property
+    def tier(self) -> str:
+        return self.tier_override or self.tier_auto
+
+    @property
+    def leverage(self) -> float:
+        return self.leverage_override or TIERS[self.tier].leverage
+
+    def set_overrides(self, tier: Optional[str], leverage: Optional[float]) -> None:
+        """Override the tier and/or the leverage (None goes back to the automatic one)."""
+        if tier is not None and tier not in TIERS:
+            raise ValueError(f"tier must be one of {', '.join(TIERS)}")
+        if leverage is not None and not 1.0 <= leverage <= MAX_LEVERAGE:
+            raise ValueError(f"leverage must be between 1 and {MAX_LEVERAGE:g}")
+        with self._lock:
+            self.tier_override, self.leverage_override = tier, leverage
+            self._update_risk_view()
 
     # ───────── candles ─────────
 
@@ -144,10 +188,16 @@ class SymbolWorker:
                          "fraction": round((step - 1 + within) / steps, 4)}
 
     def load_history(self, client: Optional[BinancePublicClient] = None) -> None:
-        """Download HISTORY_BARS closed candles per chart (status "downloading"; candles already
-        in the disk cache are not fetched again), then compute the statistics ("ready").
-        Failures leave status "failed" and the error, and re-raise. Without a `client` one is
-        made from the config and closed afterwards."""
+        """download_history, then prepare_models. Failures to download leave status "failed" and
+        the error, and re-raise."""
+        self.download_history(client)
+        self.prepare_models()
+
+    def download_history(self, client: Optional[BinancePublicClient] = None) -> None:
+        """Download HISTORY_BARS closed candles per chart (status "downloading"; candles and funding
+        rates already in the disk caches are not fetched again) and compute the funding reading.
+        Leaves status "training" (waiting for prepare_models). Failures leave status "failed" and
+        the error, and re-raise. Without a `client` one is made from the config and closed afterwards."""
         self.status = "downloading"
         self.error = None
         own_client = client is None
@@ -181,10 +231,32 @@ class SymbolWorker:
             self.candles.update(loaded)
             self.data_source = source
             self._update_stats()
-            self.status = "ready"
-            self.progress = None
+            self.status = "training"
+            self.progress = {"label": "waiting to train (one coin at a time)", "step": 0, "steps": 0,
+                             "done": 0, "total": 0, "fraction": 0.0}
         counts = ", ".join(f"{len(df):,} {iv}" for iv, df in loaded.items())
         logger.info(f"Loaded {counts} candles for {self.symbol}")
+
+    def prepare_models(self) -> None:
+        """Reuse the risk models saved on disk when they are under RETRAIN_HOURS old, else train
+        them (status "training"), then status "ready". A training failure is logged and leaves
+        the coin ready without risk readings."""
+        self.status = "training"
+        try:
+            saved = self._load_saved_models()
+            if saved is not None:
+                with self._lock:
+                    saved.score(self.candles)
+                    self.risk = saved
+                    self._update_risk_view()
+                logger.info(f"Reused risk models for {self.symbol} trained at {saved.trained_at:%Y-%m-%d %H:%M} UTC")
+            else:
+                self.train(progress=True)
+        except Exception as err:
+            logger.error(f"Training risk models failed for {self.symbol}: {err}", exc_info=True)
+        with self._lock:
+            self.status = "ready"
+            self.progress = None
 
     def refresh_candles(self, client: BinancePublicClient, now: Optional[pd.Timestamp] = None) -> List[str]:
         """Append newly closed candles per chart and rerun the statistics; returns charts updated.
@@ -215,6 +287,12 @@ class SymbolWorker:
         if updated:
             with self._lock:
                 self._update_stats()
+                if self.risk is not None:
+                    try:
+                        self.risk.score(self.candles, updated)
+                    except Exception as err:
+                        logger.warning(f"Risk scoring failed for {self.symbol}: {err}")
+                    self._update_risk_view()
         return updated
 
     def load_synthetic(self, seed: int = 7) -> None:
@@ -227,22 +305,68 @@ class SymbolWorker:
                 self.candles[iv] = align_cross_asset_data(target, {self.benchmark: bench}, freq=f"{minutes}min")
             self.data_source = "synthetic (offline mode)"
             self._update_stats()
-            self.status = "ready"
+        self.train(lgbm=False)  # the baseline only: random walks give LightGBM nothing to find
+        self.status = "ready"
 
     # ───────── statistics ─────────
 
     def _update_stats(self) -> None:
         try:
-            self.momentum = momentum_view(self.candles, self.symbol, self.benchmark, MOMENTUM_SPEC)
-            self.signals = signals_view(self.candles, self.symbol)
+            self.funding = funding_view(self.candles, self.symbol)
         except Exception as err:
-            logger.warning(f"Statistics failed for {self.symbol}: {err}")
-            self.momentum, self.signals = {}, {}
+            logger.warning(f"Funding reading failed for {self.symbol}: {err}")
+            self.funding = None
 
-    def refresh_orderbook(self, client: BinancePublicClient) -> None:
-        metrics = compute_orderbook_metrics(client.fetch_orderbook_depth(self.symbol, 20))
+    def _models_path(self) -> Optional[Path]:
+        storage = self.config.assets.storage
+        return resolve(Path(storage.cache_dir) / "risk") / f"{self.symbol}.pkl" if storage.use_cache else None
+
+    def _load_saved_models(self) -> Optional[CoinRisk]:
+        path = self._models_path()
+        if path is None:
+            return None
+        return load_models(path, self.symbol, self.benchmark, pd.Timedelta(hours=RETRAIN_HOURS))
+
+    def train(self, lgbm: bool = True, progress: bool = False) -> None:
+        """Fit and check the risk models on the candles on hand (seconds per coin with LightGBM)
+        and save them (LightGBM runs only). The models in use keep serving until the new ones
+        replace them."""
+        def report(window: str, step: int, steps: int) -> None:
+            self._set_progress(f"training risk models · {window}", step, steps)
+
+        tier = TIERS[self.tier]
         with self._lock:
-            self.orderbook = metrics
+            candles = dict(self.candles)
+        risk = CoinRisk(self.symbol, self.benchmark).train(
+            candles, stop_move(DEFAULT_STOP_PCT, tier.leverage), liquidation_move(tier.leverage, tier.mmr),
+            lgbm=lgbm, progress=report if progress else None)
+        with self._lock:
+            closed = [iv for iv, df in self.candles.items() if candles.get(iv) is not df]
+            if closed:  # candles closed while it trained
+                risk.score(self.candles, closed)
+            self.risk = risk
+            self._update_risk_view()
+        path = self._models_path()
+        if lgbm and path is not None:
+            save_models(path, risk)
+
+    def needs_training(self, now: Optional[pd.Timestamp] = None) -> bool:
+        if self.status != "ready":
+            return False
+        if self.risk is None or self.risk.trained_at is None:
+            return True
+        now = now or pd.Timestamp.now(tz="UTC")
+        return now - self.risk.trained_at >= pd.Timedelta(hours=RETRAIN_HOURS)
+
+    def _update_risk_view(self) -> None:
+        if self.risk is None:
+            self.risk_view = {}
+            return
+        try:
+            self.risk_view = self.risk.view(self.leverage, TIERS[self.tier].mmr, DEFAULT_STOP_PCT)
+        except Exception as err:
+            logger.warning(f"Risk readings failed for {self.symbol}: {err}")
+            self.risk_view = {}
 
     # ───────── output ─────────
 
@@ -263,9 +387,17 @@ class SymbolWorker:
                 "error": self.error,
                 "history": history,
                 "current_price": price,
-                "momentum": self.momentum,
-                "signals": self.signals,
-                "orderbook_depth": self.orderbook,
+                "tier": self.tier,
+                "tier_auto": self.tier_auto,
+                "leverage": self.leverage,
+                "overrides": {"tier": self.tier_override, "leverage": self.leverage_override},
+                "risk": {
+                    "stop_pct": DEFAULT_STOP_PCT,
+                    "mmr": TIERS[self.tier].mmr,
+                    "trained_at": self.risk.trained_at if self.risk is not None else None,
+                    "windows": self.risk_view,
+                },
+                "funding": self.funding,
             })
 
 
@@ -284,33 +416,47 @@ class MultiCoinStreamManager:
         self.workers: Dict[str, SymbolWorker] = {}
         self.ws_clients: Set[Any] = set()
         self._running = False
-        self._load_lock: Optional[asyncio.Lock] = None
+        # Downloads and training each run one coin at a time, on their own queues: the next coin
+        # downloads while the previous one trains
+        self._download_lock: Optional[asyncio.Lock] = None
+        self._train_lock: Optional[asyncio.Lock] = None
         self._load_tasks: Dict[str, asyncio.Task] = {}
+        self._train_tasks: Dict[str, asyncio.Task] = {}
+        self._saved_overrides: Dict[str, Dict[str, Any]] = {}  # tier/leverage from the watchlist file
 
     def load_persisted_symbols(self) -> List[str]:
-        """Load list of tracked symbols from disk if previously saved."""
+        """The saved watchlist's symbols; their tier and leverage overrides are applied as they are
+        added. Entries are {"symbol", "tier", "leverage"} objects, or plain symbols (older files)."""
         if self.persistence_path is None:
             return []
         try:
             if self.persistence_path.exists():
                 with open(self.persistence_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    symbols = data.get("symbols", [])
-                    if isinstance(symbols, list) and symbols:
-                        cleaned = [s.strip().upper() for s in symbols if isinstance(s, str) and s.strip()]
-                        logger.info(f"Loaded {len(cleaned)} persisted symbols from {self.persistence_path}: {cleaned}")
-                        return cleaned
+                cleaned = []
+                for entry in data.get("symbols", []) if isinstance(data.get("symbols"), list) else []:
+                    item = entry if isinstance(entry, dict) else {"symbol": entry}
+                    sym = item.get("symbol")
+                    if not isinstance(sym, str) or not sym.strip():
+                        continue
+                    sym = sym.strip().upper()
+                    cleaned.append(sym)
+                    self._saved_overrides[sym] = {"tier": item.get("tier"), "leverage": item.get("leverage")}
+                logger.info(f"Loaded {len(cleaned)} persisted symbols from {self.persistence_path}: {cleaned}")
+                return cleaned
         except Exception as e:
             logger.warning(f"Could not load tracked symbols from {self.persistence_path}: {e}")
         return []
 
     def persist_symbols(self) -> None:
-        """Save current list of tracked symbols to disk."""
+        """Save the watchlist (symbols with their tier and leverage overrides) to disk."""
         if self.persistence_path is None:
             return
         try:
             self.persistence_path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {"symbols": list(self.workers.keys()), "updated_at": datetime.now(timezone.utc).isoformat()}
+            coins = [{"symbol": sym, "tier": w.tier_override, "leverage": w.leverage_override}
+                     for sym, w in self.workers.items()]
+            payload = {"symbols": coins, "updated_at": datetime.now(timezone.utc).isoformat()}
             with open(self.persistence_path, "w", encoding="utf-8") as f:
                 json.dump(payload, f, indent=2)
         except Exception as e:
@@ -325,11 +471,24 @@ class MultiCoinStreamManager:
         benchmark, sector = resolve_benchmark(sym), get_symbol_sector(sym)
         logger.info(f"Adding coin: {sym} (Sector: {sector}, Benchmark: {benchmark})")
         worker = SymbolWorker(sym, benchmark, sector, self.config)
+        saved = self._saved_overrides.pop(sym, None)
+        if saved:
+            try:
+                worker.set_overrides(saved.get("tier"), saved.get("leverage"))
+            except ValueError as err:
+                logger.warning(f"Ignoring saved overrides for {sym}: {err}")
         if not self.live:
             worker.load_synthetic(seed=sum(map(ord, sym)))
         self.workers[sym] = worker
         if persist:
             self.persist_symbols()
+        return worker
+
+    def set_overrides(self, symbol: str, tier: Optional[str], leverage: Optional[float]) -> SymbolWorker:
+        """Set a coin's tier and leverage overrides (None: automatic) and save the watchlist."""
+        worker = self.workers[symbol.strip().upper()]
+        worker.set_overrides(tier, leverage)
+        self.persist_symbols()
         return worker
 
     def remove_symbol(self, symbol: str, persist: bool = True) -> bool:
@@ -345,7 +504,7 @@ class MultiCoinStreamManager:
     # ───────── history ─────────
 
     def schedule_load(self, symbol: str) -> None:
-        """Queue a background history download (one coin at a time) unless one is queued or running."""
+        """Queue a background history download and model training unless one is queued or running."""
         sym = symbol.strip().upper()
         task = self._load_tasks.get(sym)
         if task is not None and not task.done():
@@ -362,20 +521,54 @@ class MultiCoinStreamManager:
         if sym not in self.workers:
             raise KeyError(f"Symbol {sym} is not currently tracked")
         worker = self.workers[sym]
-        if self._load_lock is None:
-            self._load_lock = asyncio.Lock()
+        self._locks()
+        loop = asyncio.get_running_loop()
 
         worker.status = "queued"
         await self.broadcast({"type": "FORECAST_UPDATE", **worker.snapshot()})
-        async with self._load_lock:
+        async with self._download_lock:
             worker.status = "downloading"
             await self.broadcast({"type": "FORECAST_UPDATE", **worker.snapshot()})
             try:
-                await asyncio.get_running_loop().run_in_executor(None, worker.load_history)
+                await loop.run_in_executor(None, worker.download_history)
             except Exception:
-                pass  # load_history logged it and left status "failed" with the error
+                # download_history logged it and left status "failed" with the error
+                if sym in self.workers:
+                    await self.broadcast({"type": "FORECAST_UPDATE", **worker.snapshot()})
+                return
+        await self.broadcast({"type": "FORECAST_UPDATE", **worker.snapshot()})
+        async with self._train_lock:
+            if sym in self.workers:
+                await loop.run_in_executor(None, worker.prepare_models)
         if sym in self.workers:
             await self.broadcast({"type": "FORECAST_UPDATE", **worker.snapshot()})
+
+    def _locks(self) -> None:
+        """Create the queue locks inside the running event loop."""
+        if self._download_lock is None:
+            self._download_lock = asyncio.Lock()
+        if self._train_lock is None:
+            self._train_lock = asyncio.Lock()
+
+    def schedule_training(self, symbol: str) -> None:
+        """Queue a retrain of a ready coin's risk models (on the training queue, one coin at a time)."""
+        sym = symbol.strip().upper()
+        running = [t for t in (self._train_tasks.get(sym), self._load_tasks.get(sym)) if t is not None]
+        if any(not t.done() for t in running):
+            return
+        self._train_tasks[sym] = asyncio.create_task(self._train(sym))
+
+    async def _train(self, sym: str) -> None:
+        self._locks()
+        async with self._train_lock:
+            worker = self.workers.get(sym)
+            if worker is None or not worker.needs_training():
+                return
+            try:
+                await asyncio.get_running_loop().run_in_executor(None, worker.train)
+                logger.info(f"Retrained risk models for {sym}")
+            except Exception as err:
+                logger.error(f"Retraining failed for {sym}: {err}")
 
     # ───────── output ─────────
 
@@ -404,13 +597,9 @@ class MultiCoinStreamManager:
             worker.refresh_candles(client)
         except Exception as err:
             logger.warning(f"Candle refresh failed for {worker.symbol}: {err}")
-        try:
-            worker.refresh_orderbook(client)
-        except Exception as err:
-            logger.debug(f"Order book refresh failed for {worker.symbol}: {err}")
 
     async def start_streaming(self, poll_interval_sec: float = 3.0) -> None:
-        """Refresh prices and order books every poll; candles and statistics when a candle closes.
+        """Refresh prices every poll; candles and risk readings when a candle closes, models once a day.
         Offline (live=False) it only re-sends the synthetic snapshots."""
         self._running = True
         live = self.live
@@ -431,6 +620,9 @@ class MultiCoinStreamManager:
                         if w.symbol in prices:
                             w.live_price = prices[w.symbol]
                     await asyncio.gather(*(asyncio.to_thread(self._refresh_worker, w, client) for w in workers))
+                    for w in workers:
+                        if w.needs_training():
+                            self.schedule_training(w.symbol)
                 for w in workers:
                     if w.symbol in self.workers:
                         await self.broadcast({"type": "FORECAST_UPDATE", **w.snapshot()})

@@ -45,9 +45,10 @@ def test_coin_is_never_its_own_benchmark() -> None:
         assert resolve_benchmark(sym) != sym
 
 
-def test_btc_statistics_build_against_eth() -> None:
+def test_btc_risk_builds_against_eth() -> None:
     worker = SymbolWorker("B-BTC_USDT", resolve_benchmark("B-BTC_USDT"), "MAJOR", load_config())
     worker.load_synthetic()
 
     assert all(df.columns.is_unique for df in worker.candles.values())
-    assert worker.momentum["horizons"]["1d"]["versus"]["symbol"] == "B-ETH_USDT"
+    assert worker.benchmark == "B-ETH_USDT" and "B-ETH_USDT_close" in worker.candles["1h"]
+    assert "market_rv" in worker.risk.windows["8h"].model.columns  # the benchmark's volatility is an input
