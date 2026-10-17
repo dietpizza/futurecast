@@ -1,0 +1,4 @@
+# Example overrides: copy to ~/.futurecast/config/safety.yaml to use (this repo copy is not read).
+# The dashboard refuses to start unless both hold.
+air_gapped: true
+execution_enabled: false   # Strict safety flag: MUST BE FALSE

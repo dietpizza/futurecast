@@ -1,4 +1,4 @@
-"""FastAPI Web Server for real-time multi-coin residual alpha forecasting and cross-verification."""
+"""FastAPI web server for the momentum dashboard: REST for the watchlist, /ws for live updates."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ import uvicorn
 from fastapi.staticfiles import StaticFiles
 
 from futurecast.config import load_config
+from futurecast.ingestion.coindcx_catalog import get_all_coindcx_instruments
+from futurecast.ingestion.factory import detect_exchange
 from futurecast.publisher.multi_manager import MultiCoinStreamManager
 
 logger = logging.getLogger(__name__)
@@ -41,23 +43,15 @@ class RevalidatingStaticFiles(StaticFiles):
 
 class AddCoinRequest(BaseModel):
     symbol: str
-    exchange: Optional[str] = None
-    auto_train: bool = True
 
 
 def create_app(
     initial_symbols: Optional[List[str]] = None,
     live_mode: bool = True,
-    poll_interval: float = 3.0,
     persistence_path: Optional[str | Path] = "tracked_symbols.json",
-    models_dir: str | Path = "models",
 ) -> FastAPI:
-    """Create and configure the FastAPI web application."""
-    config = load_config()
-    config.enforce_zero_execution_policy()
-    manager = MultiCoinStreamManager(
-        config=config, models_dir=str(models_dir), persistence_path=persistence_path, live=live_mode
-    )
+    """Create and configure the FastAPI web application (load_config refuses any config that could trade)."""
+    manager = MultiCoinStreamManager(config=load_config(), persistence_path=persistence_path, live=live_mode)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -73,9 +67,7 @@ def create_app(
         manager.persist_symbols()
 
         # Start background streaming task
-        streaming_task = asyncio.create_task(
-            manager.start_streaming(poll_interval_sec=poll_interval, live=live_mode)
-        )
+        streaming_task = asyncio.create_task(manager.start_streaming())
         yield
         # Shutdown
         manager.stop()
@@ -86,35 +78,19 @@ def create_app(
             pass
 
     app = FastAPI(
-        title="FutureCast Real-Time Forecaster",
-        description="Multi-Model Residual Alpha Forecasting Engine",
+        title="FutureCast",
+        description="Momentum statistics for CoinDCX futures (read-only)",
         lifespan=lifespan,
         docs_url=None,
         redoc_url=None,
     )
     app.state.manager = manager
 
-    if STATIC_DIR.exists():
-        app.mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static")
+    app.mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static")
 
     @app.get("/", response_class=HTMLResponse)
     async def get_index() -> HTMLResponse:
-        if not HTML_PATH.exists():
-            return HTMLResponse("<h1>Web UI template missing</h1>", status_code=500)
-        with open(HTML_PATH, "r", encoding="utf-8") as f:
-            content = f.read()
-        return HTMLResponse(content, headers={"Cache-Control": "no-cache"})
-
-    @app.get("/api/status")
-    async def get_status() -> Dict[str, Any]:
-        mgr: MultiCoinStreamManager = app.state.manager
-        return {
-            "status": "online",
-            "execution_disabled": True,
-            "air_gapped": True,
-            "active_coins": mgr.get_tracked_symbols(),
-            "count": len(mgr.get_tracked_symbols()),
-        }
+        return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/coins")
     async def get_coins() -> List[Dict[str, Any]]:
@@ -122,10 +98,9 @@ def create_app(
         return mgr.get_snapshot()
 
     @app.get("/api/coindcx/futures")
-    async def get_coindcx_futures(q: Optional[str] = None, sector: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Return searchable catalog of verified CoinDCX futures pairs and metadata."""
-        from futurecast.ingestion.coindcx_catalog import get_coindcx_futures_catalog
-        return get_coindcx_futures_catalog(query=q, sector=sector)
+    async def get_coindcx_futures() -> List[Dict[str, Any]]:
+        """Every CoinDCX futures pair the add-coin search offers; the page searches and filters it."""
+        return get_all_coindcx_instruments()
 
     @app.post("/api/coins")
     async def add_coin(req: AddCoinRequest) -> Dict[str, Any]:
@@ -133,40 +108,29 @@ def create_app(
         sym = req.symbol.strip().upper()
         if not sym:
             raise HTTPException(status_code=400, detail="Invalid symbol")
-        
-        # Enforce CoinDCX symbols only (B- or I- or containing _)
-        from futurecast.ingestion.factory import detect_exchange
-        if detect_exchange(sym) != "coindcx":
+        if detect_exchange(sym) != "coindcx":  # CoinDCX symbols only (B- or I- or containing _)
             raise HTTPException(
                 status_code=400,
                 detail=f"Only CoinDCX symbols are supported (e.g. B-DOGE_USDT, B-SOL_USDT, B-PEPE_USDT, I-BTC_INR). Received '{sym}'."
             )
 
-        worker = mgr.add_symbol(sym, exchange="coindcx")
-        snapshot = mgr.get_snapshot()
+        worker = mgr.add_symbol(sym)
+        # Download its history in the background (one coin at a time)
+        if mgr.live and worker.status in ("pending", "failed"):
+            mgr.schedule_load(worker.symbol)
+        item = worker.snapshot()
+        await mgr.broadcast({"type": "FORECAST_UPDATE", **item})
+        return item
 
-        # Train in the background (one coin at a time) if this coin has no models yet
-        if req.auto_train and mgr.live and not worker.is_custom_trained:
-            mgr.schedule_training(worker.symbol)
-
-        # Find the snapshot for this symbol
-        for item in snapshot:
-            if item["symbol"] == worker.symbol:
-                await mgr.broadcast({
-                    "type": "FORECAST_UPDATE",
-                    **item,
-                })
-                return item
-        return {"symbol": worker.symbol, "exchange": worker.exchange, "sector": worker.sector}
-
-    @app.post("/api/coins/{symbol}/train")
-    async def train_coin_endpoint(symbol: str) -> Dict[str, Any]:
+    @app.post("/api/coins/{symbol}/reload")
+    async def reload_coin(symbol: str) -> Dict[str, Any]:
         mgr: MultiCoinStreamManager = app.state.manager
         sym = symbol.strip().upper()
         if sym not in mgr.workers:
             raise HTTPException(status_code=404, detail="Coin not tracked")
-        mgr.schedule_training(sym)
-        return {"status": "training_queued", "symbol": sym}
+        if mgr.live:
+            mgr.schedule_load(sym)
+        return {"status": "load_queued" if mgr.live else "offline", "symbol": sym}
 
     @app.delete("/api/coins/{symbol}")
     async def delete_coin(symbol: str) -> Dict[str, Any]:
@@ -185,11 +149,7 @@ def create_app(
         logger.info(f"WebSocket client connected. Total clients: {len(mgr.ws_clients)}")
         try:
             # Send initial state snapshot
-            await websocket.send_text(json.dumps({
-                "type": "INIT_STATE",
-                "coins": mgr.get_snapshot(),
-                "execution_disabled": True,
-            }))
+            await websocket.send_text(json.dumps({"type": "INIT_STATE", "coins": mgr.get_snapshot()}))
             while True:
                 await websocket.receive_text()  # the page only listens; coins change through the REST API
         except WebSocketDisconnect:
@@ -201,21 +161,9 @@ def create_app(
     return app
 
 
-def run_web_server(
-    host: str = "0.0.0.0",
-    port: int = 8000,
-    symbols: Optional[List[str]] = None,
-    live: bool = True,
-    poll_interval: float = 3.0,
-    persistence_path: Optional[str | Path] = "tracked_symbols.json",
-) -> None:
+def run_web_server(host: str = "0.0.0.0", port: int = 8000, live: bool = True) -> None:
     """Launch the Web UI server."""
-    app = create_app(
-        initial_symbols=symbols,
-        live_mode=live,
-        poll_interval=poll_interval,
-        persistence_path=persistence_path,
-    )
+    app = create_app(live_mode=live)
     shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host  # a wildcard bind is not a browsable address
     print(f"\n⚡ FutureCast Web UI running at: http://{shown}:{port} (listening on {host})")
     print("🛡️  Safety: STRICTLY ZERO ORDER EXECUTION\n")

@@ -5,7 +5,7 @@ import pandas as pd
 
 from futurecast.features.setups import SetupSpec, find_setups
 from futurecast.features.structure import (
-    BOS, CHOCH, DOWN, UP, active_gaps, fair_value_gaps, market_structure, swing_points,
+    BOS, CHOCH, DOWN, UP, fair_value_gaps, market_structure, swing_points,
 )
 
 
@@ -36,10 +36,10 @@ def test_bos_then_choch_with_their_legs():
 
     # Close 12.3 clears the swing high at 12 (candle 2): first break, so a BOS that sets the trend up
     assert s["break_dir"].iat[6] == UP and s["break_kind"].iat[6] == BOS
-    assert s["break_level"].iat[6] == 12 and s["leg_extreme"].iat[6] == 9 and s["leg_extreme_idx"].iat[6] == 4
+    assert s["break_level"].iat[6] == 12 and s["leg_extreme_idx"].iat[6] == 4 and low[4] == 9
     # Close 8.8 loses the swing low at 9 (candle 4) while the trend is up: a change of character
     assert s["break_dir"].iat[9] == DOWN and s["break_kind"].iat[9] == CHOCH
-    assert s["break_level"].iat[9] == 9 and s["leg_extreme"].iat[9] == 12.5 and s["leg_extreme_idx"].iat[9] == 6
+    assert s["break_level"].iat[9] == 9 and s["leg_extreme_idx"].iat[9] == 6 and high[6] == 12.5
     assert list(s["trend"]) == [0, 0, 0, 0, 0, 0, 1, 1, 1, -1]
     assert (s["break_dir"].to_numpy()[[0, 1, 2, 3, 4, 5, 7, 8]] == 0).all()
     assert s["last_break"].iat[8] == 6
@@ -52,10 +52,8 @@ def test_fair_value_gaps_and_their_zones():
     gaps = fair_value_gaps(high, low, close, max_age=10)
     bull = gaps[gaps["direction"] == UP].iloc[0]
     assert bull["idx"] == 2 and bull["bottom"] == 10 and bull["top"] == 10.5  # candle 0 high to candle 2 low
-    assert bull["touched"] == -1 or bull["touched"] > 2
     # Candle 6 closes below the gap's bottom: price sliced through, so it stops being a zone there
     assert bull["active_until"] == 6
-    assert len(active_gaps(gaps[gaps["direction"] == UP], 5)) == 1 and active_gaps(gaps[gaps["direction"] == UP], 6).empty
 
     # A gap also ages out
     young = fair_value_gaps(high[:5], low[:5], close[:5], max_age=1)
@@ -68,11 +66,13 @@ def test_structure_and_zones_never_look_ahead():
     full, part = market_structure(h, l, c, 3), market_structure(h[:2000], l[:2000], c[:2000], 3)
     pd.testing.assert_frame_equal(full.iloc[:2000], part)
 
+    # Gaps known by candle 1999 are the same, and so is whether each is still a zone up to there
+    def known(gaps):
+        g = gaps[gaps["idx"] < 2000].reset_index(drop=True)
+        return g.assign(active_until=g["active_until"].clip(upper=2000))
+
     gaps_full, gaps_part = fair_value_gaps(h, l, c, 100), fair_value_gaps(h[:2000], l[:2000], c[:2000], 100)
-    for at in (500, 1500, 1999):
-        a = active_gaps(gaps_full, at)[["idx", "top", "bottom"]].reset_index(drop=True)
-        b = active_gaps(gaps_part, at)[["idx", "top", "bottom"]].reset_index(drop=True)
-        pd.testing.assert_frame_equal(a, b)
+    pd.testing.assert_frame_equal(known(gaps_full), known(gaps_part))
 
 
 def test_live_tail_finds_the_same_setups_as_the_full_history():

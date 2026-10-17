@@ -1,9 +1,9 @@
 /**
- * Horizon selector for the risk column. Each horizon has its own trained risk models on the
- * server; switching only changes which one the watchlist shows.
+ * Horizon selector: the window the watchlist's momentum columns and signal are measured over.
+ * The server computes every horizon; switching only changes which one the rows show.
  */
 
-let currentTimeframe = "15m";
+let currentTimeframe = "4h";
 
 function setTimeframe(tf) {
   if (currentTimeframe === tf) return;

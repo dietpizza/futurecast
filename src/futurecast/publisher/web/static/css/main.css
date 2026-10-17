@@ -55,21 +55,10 @@
   --neg-fill: #e3364f;
   --neu: #5b4a4d;
   --neu-soft: #eee3e0;
-  --neu-fill: #cdbab6;
   --warn: #946f00;
   --warn-soft: #f8efcc;
-  --orange: #c2410c;
-  --orange-soft: #fbeadf;
 
   /* Risk badges: deeper tints plus a matching outline so they stand out on paper */
-  --risk-low-bg: #d5efe2;
-  --risk-low-edge: #a8dcc4;
-  --risk-moderate-bg: #f6e9b8;
-  --risk-moderate-edge: #e6d07a;
-  --risk-high-bg: #f9dfcd;
-  --risk-high-edge: #efbb98;
-  --risk-extreme-bg: #f8d5db;
-  --risk-extreme-edge: #eda5b1;
 
   --surface-raised: #ffffff;
   --well: #f6efed;
@@ -87,7 +76,6 @@
 
   /* Cyan hairline for frames that should read as "selected" (open card, trade block, tooltip) */
   --rule: rgba(0, 132, 141, 0.38);
-  --glow: transparent;
   /* Page texture: faint red scanlines, the page column's frame lines, a warm vignette */
   --scanline: rgba(176, 63, 57, 0.035);
   --frame: var(--border);
@@ -112,7 +100,7 @@
 
   --font: "Rajdhani", "Avenir Next Condensed", "Arial Narrow", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 
-  --cols: minmax(140px, 1.2fr) 112px 104px 100px 100px 92px minmax(120px, 1fr) minmax(112px, 1fr) 68px;
+  --cols: minmax(140px, 1.2fr) 112px 104px 104px 104px 96px minmax(120px, 1fr) minmax(112px, 1fr) 68px;
 
   color-scheme: light;
 }
@@ -150,20 +138,9 @@
   --neg-fill: #e8364f;
   --neu: #a3b6b5;
   --neu-soft: rgba(228, 243, 242, 0.06);
-  --neu-fill: #4a3438;
   --warn: #f2e04a;
   --warn-soft: rgba(242, 224, 74, 0.1);
-  --orange: #ff8c42;
-  --orange-soft: rgba(255, 140, 66, 0.12);
 
-  --risk-low-bg: var(--pos-soft);
-  --risk-low-edge: rgba(61, 245, 167, 0.3);
-  --risk-moderate-bg: var(--warn-soft);
-  --risk-moderate-edge: rgba(242, 224, 74, 0.3);
-  --risk-high-bg: var(--orange-soft);
-  --risk-high-edge: rgba(255, 140, 66, 0.3);
-  --risk-extreme-bg: var(--neg-soft);
-  --risk-extreme-edge: rgba(255, 74, 102, 0.35);
 
   --book-bid: #1fd68b;
   --book-ask: #e8364f;
@@ -174,7 +151,6 @@
   --focus-ring: rgba(94, 246, 255, 0.22);
 
   --rule: rgba(94, 246, 255, 0.3);
-  --glow: rgba(94, 246, 255, 0.35);
   --scanline: rgba(255, 74, 102, 0.028);
   --vignette: rgba(140, 22, 38, 0.22);
 
@@ -274,7 +250,6 @@ a {
 .trade-stat-label,
 .data-table th,
 .segmented-label,
-.tag,
 .pill,
 .btn,
 .tf-btn,
@@ -767,7 +742,7 @@ a {
   font-weight: 600;
 }
 
-.training-tag {
+.loading-tag {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -857,22 +832,9 @@ a {
 .val-neg { color: var(--neg); }
 .val-flat { color: var(--text-2); }
 .val-muted { color: var(--text-dim); font-weight: 500; }
+.val-warn { color: var(--warn); }
 
 /* Trend on the 15m and 1m charts */
-.trend-pair {
-  display: inline-flex;
-  gap: 10px;
-  font-size: 15px;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.trend-pair small {
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-dim);
-}
-
 /* Order book bar */
 .book-bar {
   display: flex;
@@ -895,34 +857,6 @@ a {
 .book-bar.is-empty {
   background: var(--neu-soft);
 }
-
-/* Risk */
-.risk-pair {
-  display: inline-flex;
-  gap: 6px;
-}
-
-.risk-num {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 3px;
-  min-width: 42px;
-  padding: 1px 6px;
-  font-size: 14px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-
-.risk-num small {
-  font-size: 12px;
-  font-weight: 700;
-  opacity: 0.7;
-}
-
-.lvl-low { background: var(--risk-low-bg); box-shadow: inset 0 0 0 1px var(--risk-low-edge); color: var(--pos); }
-.lvl-moderate { background: var(--risk-moderate-bg); box-shadow: inset 0 0 0 1px var(--risk-moderate-edge); color: var(--warn); }
-.lvl-high { background: var(--risk-high-bg); box-shadow: inset 0 0 0 1px var(--risk-high-edge); color: var(--orange); }
-.lvl-extreme { background: var(--risk-extreme-bg); box-shadow: inset 0 0 0 1px var(--risk-extreme-edge); color: var(--neg); }
 
 /* Actions */
 .c-actions {
@@ -1042,23 +976,6 @@ a {
   font-size: 13px;
 }
 
-.tag {
-  display: inline-flex;
-  align-items: center;
-  height: 20px;
-  padding: 0 7px;
-  border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
-  font-size: 12px;
-  font-weight: 700;
-  background: var(--neu-soft);
-  color: var(--neu);
-  white-space: nowrap;
-}
-
-.tag-pos { background: var(--pos-soft); color: var(--pos); }
-.tag-neg { background: var(--neg-soft); color: var(--neg); }
-.tag-warn { background: var(--warn-soft); color: var(--warn); }
-
 /* Trade block: the numbers you act on, at full contrast. The side's color says whether it is a trade. */
 .trade-block {
   border-color: var(--rule);
@@ -1079,7 +996,6 @@ a {
 
 .trade-side.is-go-long { border-color: var(--pos-fill); background: var(--pos-soft); box-shadow: inset 3px 0 0 var(--pos-fill); }
 .trade-side.is-go-short { border-color: var(--neg-fill); background: var(--neg-soft); box-shadow: inset 3px 0 0 var(--neg-fill); }
-.trade-side.is-unproven { border-color: var(--warn); box-shadow: inset 3px 0 0 var(--warn); }
 
 .trade-head {
   display: flex;
@@ -1101,31 +1017,12 @@ a {
   color: var(--text);
 }
 
-/* Three-up while long and short sit side by side, all five in a row when one side trades alone */
+/* The horizon's five numbers in a row */
 .trade-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px 18px;
   margin-top: 14px;
-}
-
-.sides-grid.is-single {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.sides-grid.is-single .trade-stats {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-/* What else happened, under the trade: one quiet line */
-.trade-foot {
-  margin-top: 10px;
-  font-size: 13.5px;
-  color: var(--text-dim);
-}
-
-.detail-table .trade-foot {
-  padding: 0 16px 6px;
 }
 
 .trade-stat {
@@ -1151,47 +1048,12 @@ a {
   color: var(--text);
 }
 
-.trade-stat-value.is-tp { color: var(--pos); }
-.trade-stat-value.is-sl { color: var(--neg); }
 
 .trade-stat-sub {
   font-size: 13.5px;
   font-variant-numeric: tabular-nums;
   color: var(--text-2);
 }
-
-/* Backtest: the average trade is the number that says whether the strategy pays */
-.bt-avg {
-  font-size: 16px;
-  font-weight: 700;
-}
-
-/* Equity sparkline in the backtest table: account from 100, dashed where it started */
-.spark {
-  width: 1%;
-}
-
-.equity {
-  display: block;
-  width: 160px;
-  height: 28px;
-}
-
-.equity-base {
-  stroke: var(--border-strong);
-  stroke-width: 1;
-  stroke-dasharray: 3 3;
-  vector-effect: non-scaling-stroke;
-}
-
-.equity-line {
-  fill: none;
-  stroke-width: 1.5;
-  vector-effect: non-scaling-stroke;
-}
-
-.equity-line.is-up { stroke: var(--pos); }
-.equity-line.is-down { stroke: var(--neg); }
 
 /* Fine print: supporting detail that doesn't change a trade */
 .detail-quiet {
@@ -1235,7 +1097,24 @@ a {
   text-align: right;
 }
 
-/* Levels: one line per chart, label column on the left */
+/* Horizons table: rows select the horizon; the selected one is marked like a selection */
+.hz-row {
+  cursor: pointer;
+}
+
+.hz-row:hover td {
+  background: var(--surface-hover);
+}
+
+.hz-row.is-current td {
+  background: var(--accent-soft);
+}
+
+.hz-row.is-current td:first-child {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* Signals: one line per signal, label column on the left */
 .levels {
   display: grid;
   gap: 6px;
@@ -1261,13 +1140,6 @@ a {
   font-size: 12px;
   font-weight: 600;
   color: var(--text-dim);
-}
-
-/* Long and short side by side */
-.sides-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 32px;
 }
 
 .details-footer {
@@ -1318,21 +1190,19 @@ a {
 
 @media (max-width: 1180px) {
   :root {
-    --cols: minmax(130px, 1.2fr) 108px 100px 96px 96px 88px minmax(108px, 1fr) 68px;
+    --cols: minmax(130px, 1.2fr) 108px 100px 100px 100px 92px minmax(108px, 1fr) 68px;
   }
   .c-book { display: none; }
+  .trade-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .details-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 980px) {
   :root {
-    --cols: minmax(110px, 1.2fr) 100px 96px 88px 88px minmax(100px, 1fr) 64px;
+    --cols: minmax(110px, 1.2fr) 100px 96px 92px 92px minmax(100px, 1fr) 64px;
   }
-  .c-trend { display: none; }
+  .c-char { display: none; }
   .live-clock { display: none; }
-  .sides-grid { grid-template-columns: minmax(0, 1fr); }
-  .trade-stats,
-  .sides-grid.is-single .trade-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 720px) {
@@ -1355,7 +1225,7 @@ a {
     grid-template-columns: 1fr auto auto auto;
     grid-template-areas:
       "pair   pair  price  actions"
-      "signal long  short  actions";
+      "signal move  next   actions";
     column-gap: 14px;
     row-gap: 8px;
     padding: 12px 8px 12px 16px;
@@ -1363,21 +1233,21 @@ a {
   .row-main .c-pair { grid-area: pair; }
   .row-main .c-price { grid-area: price; }
   .row-main .c-signal { grid-area: signal; display: flex; align-items: center; }
-  .row-main .c-long { grid-area: long; }
-  .row-main .c-short { grid-area: short; }
+  .row-main .c-move { grid-area: move; }
+  .row-main .c-next { grid-area: next; }
   .row-main .c-actions { grid-area: actions; flex-direction: column; justify-content: center; }
-  .row-main .c-long::before { content: "Long "; }
-  .row-main .c-short::before { content: "Short "; }
-  .row-main .c-long::before,
-  .row-main .c-short::before { font-size: 12px; color: var(--text-muted); }
-  .row-main .c-trend,
+  .row-main .c-move::before { content: "Move "; }
+  .row-main .c-next::before { content: "Next "; }
+  .row-main .c-move::before,
+  .row-main .c-next::before { font-size: 12px; color: var(--text-muted); }
+  .row-main .c-char,
+  .row-main .c-flow,
   .row-main .c-book,
-  .row-main .c-risk,
   .row-main .btn-remove { display: none; }
 
   .row-details { padding: 4px 12px 16px; }
   .details-grid { grid-template-columns: minmax(0, 1fr); }
-  .trade-stats,
-  .sides-grid.is-single .trade-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .trade-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detail-table { overflow-x: auto; }
   .trade-stat-value { font-size: 23px; }
 }

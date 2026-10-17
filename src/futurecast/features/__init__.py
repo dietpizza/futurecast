@@ -1,3 +1,1 @@
-from futurecast.features.pipeline import FeaturePipeline
-
-__all__ = ["FeaturePipeline"]
+"""Market structure, fair value gaps, setup and wedge rules, and order-book metrics."""

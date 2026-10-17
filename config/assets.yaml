@@ -1,11 +1,5 @@
 # Example overrides: copy to ~/.futurecast/config/assets.yaml to use (this repo copy is not read).
 
-# Set per coin at runtime for the residual-alpha engine; these defaults only serve tests
-target_asset: "DOGEUSDT"
-benchmark_assets:
-  - "BTCUSDT"
-  - "ETHUSDT"
-
 # Data source (strictly public read-only endpoints, no authentication required)
 data_source:
   base_url: "https://fapi.binance.com"

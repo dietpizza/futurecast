@@ -1,4 +1,4 @@
-"""Funding rates: Binance download, point-in-time merge onto candles, and the features the models see."""
+"""Funding rates: Binance download, point-in-time merge onto candles, and the funding signal."""
 
 import math
 from typing import List
@@ -8,17 +8,15 @@ import pandas as pd
 import pytest
 
 from futurecast.config import load_config
-from futurecast.features.pipeline import FeaturePipeline
 from futurecast.ingestion import binance
 from futurecast.ingestion.binance import BinancePublicClient, interval_to_ms
-from futurecast.ingestion.factory import resolve_benchmarks
-from futurecast.publisher.multi_manager import CANDLE_MINUTES, LIVE_BARS, SymbolWorker
+from futurecast.ingestion.factory import resolve_benchmark
+from futurecast.publisher.multi_manager import CHART_MINUTES, SymbolWorker
 
 MINUTE, HOUR, DAY = 60_000, 3_600_000, 86_400_000
 SETTLE = 1_700_006_400_000  # a real 8h BTCUSDT funding settlement (16:00 UTC)
-NOW = SETTLE + 30_000  # the 1m, 5m and 15m candles closing at the settlement have just closed
+NOW = SETTLE + 30_000  # the candles closing at the settlement have just closed
 SYMBOL = "B-SOL_USDT"
-FUNDING_COLS = ["funding_rate_bps", "funding_rate_dev_3d", "funding_rate_spread_btc"]
 
 
 def _phase(market: str) -> int:
@@ -106,9 +104,8 @@ def _client(fake: FakeBinance) -> BinancePublicClient:
     return client
 
 
-def _worker(tmp_path) -> SymbolWorker:
-    return SymbolWorker(SYMBOL, "coindcx", resolve_benchmarks(SYMBOL, "coindcx", sector_aware=True),
-                        "L1", load_config(), tmp_path / "models")
+def _worker() -> SymbolWorker:
+    return SymbolWorker(SYMBOL, resolve_benchmark(SYMBOL), "L1", load_config())
 
 
 def test_funding_rates_page_forward_and_reuse_downloads(clock) -> None:
@@ -160,52 +157,34 @@ def test_candles_carry_the_rate_settled_before_they_closed(clock) -> None:
     assert close.iloc[-1] == SETTLE
 
 
-def test_live_refresh_feeds_settled_funding_into_model_features(clock, tmp_path) -> None:
+def test_history_and_live_candles_carry_the_settled_funding_rate(clock) -> None:
     fake = FakeBinance(clock)
     client = _client(fake)
-    worker = _worker(tmp_path)
-    btc = worker.benchmarks[0]
+    worker = _worker()
+    bench = worker.benchmark
 
-    assert worker.refresh_candles(client, now=pd.Timestamp(NOW, unit="ms", tz="UTC")) == list(CANDLE_MINUTES)
+    worker.load_history(client)
 
-    for iv in ("1m", "15m"):
-        assert {f"{SYMBOL}_funding_rate", f"{btc}_funding_rate"} <= set(worker.candles[iv].columns)
-    feats = worker.engine.last_features
-    sol_rate, btc_rate = rate("SOLUSDT", SETTLE - 8 * HOUR), rate("BTCUSDT", SETTLE - 8 * HOUR)
-    assert feats["funding_rate_bps"].iloc[-1] == pytest.approx(sol_rate * 1e4)
-    assert feats["funding_rate_spread_btc"].iloc[-1] == pytest.approx((sol_rate - btc_rate) * 1e4)
-    assert worker.latest_event.microstructure_context["funding_rate_bps"] == pytest.approx(sol_rate * 1e4)
+    assert worker.status == "ready"
+    hourly = worker.candles["1h"]
+    assert f"{SYMBOL}_funding_rate" in hourly and f"{bench}_funding_rate" not in hourly
+    assert f"{SYMBOL}_funding_rate" not in worker.candles["15m"]  # only the coin's, only where it is read
+    # The candle closing at the settlement still carries the previous rate
+    assert worker.signals["funding"]["rate_pct"] == pytest.approx(100 * rate("SOLUSDT", SETTLE - 8 * HOUR))
+    assert set(worker.momentum["horizons"]) == {"1h", "4h", "1d", "3d"}
 
-    # Next 1m candle closes after the settlement: it carries the new rate, fetched incrementally
-    clock.now_ms += MINUTE
+    # An hour later both charts gain a candle; the new hourly one carries the new rate, fetched incrementally
+    clock.now_ms += HOUR
     before = len(fake.funding_calls())
-    assert worker.refresh_candles(client, now=pd.Timestamp(clock.now_ms, unit="ms", tz="UTC")) == ["1m"]
-    assert worker.engine.last_features["funding_rate_bps"].iloc[-1] == pytest.approx(rate("SOLUSDT", SETTLE) * 1e4)
+    assert worker.refresh_candles(client, now=pd.Timestamp(clock.now_ms, unit="ms", tz="UTC")) == list(CHART_MINUTES)
+    assert worker.signals["funding"]["rate_pct"] == pytest.approx(100 * rate("SOLUSDT", SETTLE))
     new_calls = fake.funding_calls()[before:]
-    assert len(new_calls) == len(worker.benchmarks) + 1
-    assert all(int(r.url.params["startTime"]) > SETTLE - 8 * HOUR for r in new_calls)
+    assert len(new_calls) == 1 and int(new_calls[0].url.params["startTime"]) > SETTLE - 8 * HOUR
 
 
-@pytest.mark.parametrize("interval", ["1m", "15m"])
-def test_funding_features_match_between_training_history_and_live_buffer(clock, tmp_path, interval) -> None:
-    worker = _worker(tmp_path)
-    history, _ = worker._fetch_aligned(_client(FakeBinance(clock)), interval, 2 * LIVE_BARS)
-    assert len(history) > LIVE_BARS
-    pipe = worker.pipes[interval]
-
-    trained_on = pipe.generate_features(history)
-    served = pipe.generate_features(history.tail(LIVE_BARS))
-
-    assert list(served.columns) == list(trained_on.columns)
-    tail = slice(-300, None)  # the rows the live models read: last candle plus z-score warmup
-    pd.testing.assert_frame_equal(served[FUNDING_COLS].iloc[tail], trained_on[FUNDING_COLS].iloc[tail])
-    assert (trained_on[FUNDING_COLS].iloc[tail] != 0).all().all()
-
-
-def test_offline_candles_need_no_funding_download(tmp_path) -> None:
-    worker = _worker(tmp_path)
+def test_offline_candles_need_no_funding_download() -> None:
+    worker = _worker()
     worker.load_synthetic()
 
-    feats = FeaturePipeline(target_symbol=SYMBOL, primary_benchmark=worker.benchmarks[0],
-                            secondary_benchmark=worker.benchmarks[-1]).generate_features(worker.candles["1m"])
-    assert (feats[FUNDING_COLS] == 0).all().all()
+    assert worker.signals["funding"] is None
+    assert worker.momentum["horizons"]["4h"]["z"] is not None

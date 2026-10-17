@@ -25,7 +25,6 @@ from numpy.lib.stride_tricks import sliding_window_view
 
 UP, DOWN = 1, -1
 BOS, CHOCH = 1, 2
-KIND_NAMES = {BOS: "BOS", CHOCH: "CHoCH"}
 
 
 def swing_points(high: np.ndarray, low: np.ndarray, swing_len: int) -> tuple[np.ndarray, np.ndarray]:
@@ -49,8 +48,8 @@ def market_structure(high, low, close, swing_len: int) -> pd.DataFrame:
     Columns:
     - trend: 1 up, -1 down, 0 before the first break.
     - break_dir / break_kind: direction (1 / -1) and kind (BOS / CHOCH) of a break on this candle, else 0.
-    - break_level: the swing level the close broke; break_origin: that swing's pivot candle.
-    - leg_extreme / leg_extreme_idx: the lowest low (up break) or highest high (down break) between
+    - break_level: the swing level the close broke.
+    - leg_extreme_idx: the candle with the lowest low (up break) or highest high (down break) between
       the broken swing and the break, i.e. where the move that broke structure started.
     - swing_high / swing_low: the latest confirmed swing levels (broken or not).
     - last_break: position of the most recent break up to this candle (-1 before the first).
@@ -65,8 +64,6 @@ def market_structure(high, low, close, swing_len: int) -> pd.DataFrame:
     break_dir = np.zeros(n, dtype=np.int8)
     break_kind = np.zeros(n, dtype=np.int8)
     break_level = np.full(n, np.nan)
-    break_origin = np.full(n, -1, dtype=np.int64)
-    leg_extreme = np.full(n, np.nan)
     leg_extreme_idx = np.full(n, -1, dtype=np.int64)
     swing_high = np.full(n, np.nan)
     swing_low = np.full(n, np.nan)
@@ -93,17 +90,13 @@ def market_structure(high, low, close, swing_len: int) -> pd.DataFrame:
         c = closes[t]
         if sh_live and c > sh:
             seg = low[sh_i + 1:t + 1]
-            m = int(np.argmin(seg))
             break_dir[t], break_kind[t] = UP, CHOCH if state == DOWN else BOS
-            break_level[t], break_origin[t] = sh, sh_i
-            leg_extreme[t], leg_extreme_idx[t] = seg[m], sh_i + 1 + m
+            break_level[t], leg_extreme_idx[t] = sh, sh_i + 1 + int(np.argmin(seg))
             state, sh_live, last = UP, False, t
         elif sl_live and c < sl:
             seg = high[sl_i + 1:t + 1]
-            m = int(np.argmax(seg))
             break_dir[t], break_kind[t] = DOWN, CHOCH if state == UP else BOS
-            break_level[t], break_origin[t] = sl, sl_i
-            leg_extreme[t], leg_extreme_idx[t] = seg[m], sl_i + 1 + m
+            break_level[t], leg_extreme_idx[t] = sl, sl_i + 1 + int(np.argmax(seg))
             state, sl_live, last = DOWN, False, t
         trend[t] = state
         swing_high[t], swing_low[t] = sh, sl
@@ -111,7 +104,7 @@ def market_structure(high, low, close, swing_len: int) -> pd.DataFrame:
 
     return pd.DataFrame({
         "trend": trend, "break_dir": break_dir, "break_kind": break_kind, "break_level": break_level,
-        "break_origin": break_origin, "leg_extreme": leg_extreme, "leg_extreme_idx": leg_extreme_idx,
+        "leg_extreme_idx": leg_extreme_idx,
         "swing_high": swing_high, "swing_low": swing_low, "last_break": last_break,
     })
 
@@ -120,9 +113,8 @@ def fair_value_gaps(high, low, close, max_age: int) -> pd.DataFrame:
     """Every fair value gap, one row each, with how long it stays a zone.
 
     Columns: idx (the third candle, where the gap becomes known), direction (1 bullish, -1 bearish),
-    top, bottom, touched (first later candle that traded into the gap, -1 if none within max_age)
-    and active_until (first candle at whose close the gap is no longer a zone: a close beyond its
-    far side, or max_age candles after it formed). A gap is a zone on candles idx .. active_until - 1.
+    top, bottom and active_until (first candle at whose close the gap is no longer a zone: a close
+    beyond its far side, or max_age candles after it formed). A gap is a zone on candles idx .. active_until - 1.
     """
     high = np.asarray(high, dtype=float)
     low = np.asarray(low, dtype=float)
@@ -138,27 +130,14 @@ def fair_value_gaps(high, low, close, max_age: int) -> pd.DataFrame:
     order = np.argsort(idx, kind="stable")
     idx, direction, top, bottom = idx[order], direction[order], top[order], bottom[order]
 
-    touched = np.full(len(idx), -1, dtype=np.int64)
     active_until = idx + max_age + 1
     for g in range(len(idx)):
         start, stop = idx[g] + 1, min(idx[g] + max_age + 1, n)
         if start >= stop:
             continue
-        if direction[g] == UP:
-            dead = close[start:stop] < bottom[g]
-            hit = low[start:stop] <= top[g]
-        else:
-            dead = close[start:stop] > top[g]
-            hit = high[start:stop] >= bottom[g]
+        dead = close[start:stop] < bottom[g] if direction[g] == UP else close[start:stop] > top[g]
         if dead.any():
             active_until[g] = start + int(dead.argmax())
-        if hit.any():
-            touched[g] = start + int(hit.argmax())
 
     return pd.DataFrame({"idx": idx, "direction": direction, "top": top, "bottom": bottom,
-                         "touched": touched, "active_until": active_until})
-
-
-def active_gaps(gaps: pd.DataFrame, at: int) -> pd.DataFrame:
-    """Gaps that are zones at the close of candle `at`."""
-    return gaps[(gaps["idx"] <= at) & (gaps["active_until"] > at)]
+                         "active_until": active_until})

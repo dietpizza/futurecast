@@ -199,14 +199,13 @@ def test_orderbook_sorted_and_scaled() -> None:
     client = _client(FakeBinance())
 
     book = client.fetch_orderbook_depth("B-1000PEPE_USDT", limit=20)
-    assert book["source"] == "binance:1000PEPEUSDT"
     assert book["bids"] == [(0.0040, 5.0), (0.0039, 10.0)]
     assert book["asks"] == [(0.0041, 3.0), (0.0042, 7.0)]
 
     scaled = client.fetch_orderbook_depth("B-PEPE_USDT", limit=1)
     assert scaled["bids"][0] == pytest.approx((0.0040 / 1000, 5_000.0))
 
-    assert client.fetch_orderbook_depth("B-NOPE_USDT")["source"] == "empty"
+    assert client.fetch_orderbook_depth("B-NOPE_USDT") == {"bids": [], "asks": []}
 
 
 def test_rate_limit_is_retried() -> None:

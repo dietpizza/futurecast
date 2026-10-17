@@ -2,8 +2,9 @@
  * Main Web Terminal Application Logic.
  * Handles WebSocket streaming, state management, CoinDCX integration, and DOM rendering.
  *
- * Everything shown comes from the server as-is: when a model is missing, untrained or has
- * no proven edge the page says so instead of filling the gap.
+ * Every number shown is the server's momentum statistics as-is (stats/momentum.py,
+ * stats/signals.py): when the history is missing or too short the page says so instead of
+ * filling the gap.
  */
 
 // Global State
@@ -23,15 +24,12 @@ const SECTOR_LABELS = {
   INFRA: "Infra",
   GENERAL_ALT: "Alt",
 };
-const BIAS_LABELS = {
-  LONG_RISKIER: { label: "Longs riskier", tag: "tag-warn" },
-  SHORT_RISKIER: { label: "Shorts riskier", tag: "tag-warn" },
-  BALANCED: { label: "Balanced", tag: "" },
-};
-const RISK_STATUS = {
-  edge: { label: "Beats baseline", tag: "tag-pos", note: "The models beat a volatility-only baseline on unseen data (90% confidence)." },
-  no_edge: { label: "Volatility baseline", tag: "", note: "The models did not beat a volatility-only baseline on unseen data, so the baseline is shown." },
-  insufficient_data: { label: "Too little data", tag: "tag-warn", note: "Too few independent test windows to judge, so the volatility baseline is shown." },
+const HORIZONS = ["1h", "4h", "1d", "3d"];
+const FIFTHS = ["bottom fifth", "second fifth", "middle fifth", "fourth fifth", "top fifth"];
+const CHARACTER = {
+  trending: { label: "Trending", note: "moves tend to keep their direction within this horizon" },
+  mean_reverting: { label: "Reverting", note: "moves tend to reverse within this horizon" },
+  random: { label: "Random", note: "no significant trending or reversal: a random walk at 5%" },
 };
 const ICON_CHEVRON = `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" /></svg>`;
 const ICON_CLOSE = `<svg class="icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 4.5l7 7M11.5 4.5l-7 7" /></svg>`;
@@ -137,7 +135,7 @@ async function quickAdd(symbol) {
     const resp = await fetch("/api/coins", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol: symbol, auto_train: true }),
+      body: JSON.stringify({ symbol: symbol }),
     });
     if (resp.ok) {
       const data = await resp.json();
@@ -152,14 +150,14 @@ async function quickAdd(symbol) {
   }
 }
 
-async function trainCoin(symbol) {
+async function reloadCoin(symbol) {
   if (!coinsData[symbol]) return;
-  coinsData[symbol].training_status = "queued";
+  coinsData[symbol].status = "queued";
   renderCoinCard(symbol, false);
   try {
-    await fetch(`/api/coins/${encodeURIComponent(symbol)}/train`, { method: "POST" });
+    await fetch(`/api/coins/${encodeURIComponent(symbol)}/reload`, { method: "POST" });
   } catch (err) {
-    console.error("Failed to train coin:", err);
+    console.error("Failed to reload coin:", err);
   }
 }
 
@@ -224,8 +222,33 @@ function signed(num, decimals = 2) {
   return (v > 0 ? "+" : "−") + fixed;
 }
 
+// A signed percentage that is already in percent: 1.234 -> "+1.23%"
+function sp(v, decimals = 2) {
+  return isNum(v) ? `${signed(v, decimals)}%` : "—";
+}
+
 function pct(p, decimals = 0) {
   return isNum(p) ? `${(Number(p) * 100).toFixed(decimals)}%` : "—";
+}
+
+function ordinal(n) {
+  if (!isNum(n)) return "—";
+  const v = Math.round(n);
+  const tail = v % 100 >= 11 && v % 100 <= 13 ? "th" : ({ 1: "st", 2: "nd", 3: "rd" }[v % 10] || "th");
+  return `${v}${tail}`;
+}
+
+// A percentile as an ordinal, with the ends said as "<1st" and ">99th" rather than "0th" and "100th"
+function pctile(p) {
+  if (!isNum(p)) return "—";
+  if (p < 0.5) return "<1st";
+  if (p >= 99.5) return ">99th";
+  return ordinal(p);
+}
+
+function pText(p) {
+  if (!isNum(p)) return "p —";
+  return p < 0.001 ? "p < 0.001" : `p ${p < 0.01 ? p.toFixed(3) : p.toFixed(2)}`;
 }
 
 function formatPrice(p) {
@@ -238,6 +261,7 @@ function formatPrice(p) {
 
 function formatUsdCompact(v) {
   if (!isNum(v) || !v) return "—";
+  if (v >= 1e9) return "$" + (v / 1e9).toFixed(1) + "B";
   if (v >= 1e6) return "$" + (v / 1e6).toFixed(1) + "M";
   if (v >= 1e3) return "$" + Math.round(v / 1e3) + "k";
   return "$" + Math.round(v);
@@ -250,110 +274,8 @@ function toneClass(v, decimals = 2) {
   return v > 0 ? "val-pos" : "val-neg";
 }
 
-function titleCase(s) {
-  return (s || "").toLowerCase().replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function riskLevelClass(level) {
-  const lvl = (level || "").toUpperCase();
-  if (lvl === "EXTREME") return "lvl-extreme";
-  if (lvl === "HIGH") return "lvl-high";
-  if (lvl === "MODERATE") return "lvl-moderate";
-  return "lvl-low";
-}
-
 function coindcxUrl(symbol) {
   return symbol.startsWith("B-") ? "https://coindcx.com/futures/" + symbol : "https://coindcx.com/trade/" + symbol;
-}
-
-// ───────── Training helpers ─────────
-
-const BUSY_STATUSES = ["queued", "downloading", "training"];
-
-function isBusy(coin) {
-  return BUSY_STATUSES.includes(coin.training_status);
-}
-
-function trainingVerb(coin) {
-  return { queued: "Queued", downloading: "Downloading", training: "Training" }[coin.training_status] || "";
-}
-
-// "Downloading 34%": share of this stage done, from the server's training_progress
-function trainingStage(coin) {
-  const p = coin.training_progress;
-  const verb = trainingVerb(coin);
-  return p && isNum(p.fraction) && coin.training_status !== "queued" ? `${verb} ${Math.floor(p.fraction * 100)}%` : verb;
-}
-
-function trainingDetail(coin) {
-  const p = coin.training_progress;
-  if (coin.training_status === "queued") return "Queued for training (one coin at a time)";
-  if (!p) return coin.training_status === "downloading" ? "Downloading candles…" : "Training on real candles…";
-  if (p.stage === "download") {
-    const counts = p.total ? ` · ${p.done.toLocaleString()} of ${p.total.toLocaleString()} new` : "";
-    return `Downloading ${p.label}${counts} · ${p.step} of ${p.steps}`;
-  }
-  return `Training ${p.label} · step ${p.step} of ${p.steps}`;
-}
-
-function trainingNote(coin) {
-  const status = coin.training_status;
-  if (status === "downloading") return "downloading…";
-  if (status === "training") return "training…";
-  if (status === "queued") return "queued";
-  if (status === "failed") return "training failed";
-  if (status === "untrained") return "not trained";
-  return "no model";
-}
-
-// ───────── Setup helpers ─────────
-
-// The four checks of an A+ setup, in the strategy's order: [key, name (side, charts), what it means (charts)]
-const CHECKLIST = [
-  ["htf_trend", (up, c) => `${c.context} trend ${up ? "up" : "down"}`,
-    (c) => `The ${c.context} chart's latest structure break was in the trade's direction.`],
-  ["htf_zone", (up, c) => `Pulled into a ${c.context} ${up ? "bullish" : "bearish"} gap`,
-    (c) => `The ${c.entry} pullback reached into a ${c.context} fair value gap that existed before price got there, and no ${c.context} candle has closed through it since.`],
-  ["ltf_choch", (up, c) => `${c.entry} CHoCH ${up ? "up" : "down"}`,
-    (c) => `A ${c.entry} close beyond the last swing point against the ${c.entry} trend: the short-term trend changed character.`],
-  ["ltf_gap", (up, c) => `${c.entry} gap left behind`,
-    (c) => `The move that broke structure left a ${c.entry} fair value gap. The limit order sits at its midpoint.`],
-];
-const STATE_LABELS = {
-  waiting: "Waiting for fill", in_trade: "Filled", won: "Hit target", lost: "Stopped out",
-  timeout: "Timed out", expired: "Expired", cancelled: "Cancelled",
-};
-const STATE_SHORT = {
-  in_trade: "filled", won: "hit target", lost: "stopped", timeout: "timed out", expired: "expired", cancelled: "cancelled",
-};
-const MIN_SIGNAL_TRADES = 10;  // replayed trades a signal needs; mirrors min_signal_trades in models/setup_model.py
-
-function setupsOf(coin) {
-  return coin.setups || {};
-}
-
-function setupOf(coin, side) {
-  return setupsOf(coin)[side] || null;
-}
-
-// The setup charts, e.g. { entry: "15m", context: "4h" }
-function chartsOf(coin) {
-  const st = setupsOf(coin);
-  return { entry: st.entry_interval || "1m", context: st.context_interval || "15m" };
-}
-
-function isWaitingAPlus(s) {
-  return Boolean(s && s.state === "waiting" && s.grade === "A+");
-}
-
-// How long ago, from a count of candles of `minutes` each
-function agoText(candles, minutes = 1) {
-  if (!isNum(candles)) return "";
-  const mins = candles * minutes;
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins} min ago`;
-  if (mins < 2880) return `${Math.round(mins / 60)} h ago`;
-  return `${Math.round(mins / 1440)} d ago`;
 }
 
 function clockTime(iso) {
@@ -368,148 +290,188 @@ function whenText(iso) {
   return `${new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" })} ${clockTime(iso)}`;
 }
 
-function trendText(trend) {
-  return trend === "up" ? "Up" : trend === "down" ? "Down" : "None";
+function spanText(fromIso) {
+  if (!fromIso) return "";
+  const days = (Date.now() - new Date(fromIso).getTime()) / 86400000;
+  return days >= 365 ? `${formatNumber(days / 365, 1)} years` : `${Math.round(days)} days`;
 }
 
-function trendClass(trend) {
-  return trend === "up" ? "val-pos" : trend === "down" ? "val-neg" : "val-muted";
+// ───────── History download ─────────
+
+const BUSY_STATUSES = ["queued", "downloading"];
+
+function isBusy(coin) {
+  return BUSY_STATUSES.includes(coin.status);
 }
 
-function intervalMinutes(interval) {
-  const unit = String(interval || "").slice(-1);
-  return (parseInt(interval, 10) || 1) * (unit === "d" ? 1440 : unit === "h" ? 60 : 1);
+// "Downloading 34%": share of the download done, from the server's progress
+function loadingStage(coin) {
+  if (coin.status === "queued") return "Queued";
+  const p = coin.progress;
+  return p && isNum(p.fraction) ? `Downloading ${Math.floor(p.fraction * 100)}%` : "Downloading";
 }
 
-// The test evidence behind a setup's target: the models' replay when they have an edge, else the rules'
-function targetEvidence(coin, targetR) {
-  const ev = coin.setup_model;
-  return ev && ev.targets ? ev.targets[String(Number(targetR))] || null : null;
+function loadingDetail(coin) {
+  const p = coin.progress;
+  if (coin.status === "queued") return "Queued for download (one coin at a time)";
+  if (!p) return "Downloading candles…";
+  const counts = p.total ? ` · ${p.done.toLocaleString()} of ${p.total.toLocaleString()} new` : "";
+  return `Downloading ${p.label}${counts} · ${p.step} of ${p.steps}`;
 }
 
-function servedReplay(t) {
-  return t ? (t.status === "edge" ? t.model_replay : t.rules_replay) || {} : {};
+// ───────── Momentum helpers ─────────
+
+function momentumOf(coin) {
+  return coin.momentum || {};
 }
 
-function recordText(r) {
-  const n = (r && r.trades) || 0;
-  return n < MIN_SIGNAL_TRADES
-    ? `only ${n} past A+ ${n === 1 ? "trade" : "trades"} on unseen history to judge by (needs ${MIN_SIGNAL_TRADES})`
-    : `past A+ trades on unseen history averaged ${signed(r.avg_net_r, 2)}R after fees`;
+function horizonOf(coin, name = currentTimeframe) {
+  return (momentumOf(coin).horizons || {})[name] || null;
 }
 
-// SetupSpec.costs() for a heading note: "after fees", with what a trade pays per leg in the tooltip
-// (nothing from a server that predates per-leg fees)
-function feesNote(c) {
-  if (!c) return "";
-  const p = (v) => `${+Number(v).toFixed(4)}%`;
-  const tip = `A win pays ${p(c.won_pct)} round trip, a stop ${p(c.lost_pct)}. The limit entry and a limit take-profit pay the ${p(c.maker_pct)} maker fee; the stop is a market order: the ${p(c.taker_pct)} taker fee plus ${p(c.slippage_pct)} slippage. A timeout exit pays the taker fee, ${p(c.timeout_pct)} round trip.`;
-  return ` · <span data-tooltip-title="Fees per leg" data-tooltip="${esc(tip)}">after fees</span>`;
+function hasMove(h) {
+  return Boolean(h && isNum(h.z));
 }
 
-// What a side's latest setup means now. Mirrors the signal rule in engine/setups.py: an A+ setup whose
-// limit order is still waiting, whose served win chance clears break-even and whose replay made money.
-function setupVerdict(coin, side) {
-  const s = setupOf(coin, side);
-  const up = side === "long";
-  const charts = chartsOf(coin);
-  const ago = s ? agoText(s.candles_ago, intervalMinutes(charts.entry)) : "";
-  if (!s) {
-    return { state: "idle", label: "No setup", pill: "pill-neutral", why: `No ${charts.entry} change of character ${up ? "up" : "down"} with a gap behind it in the candles on hand.` };
+function fifthText(a) {
+  return a.buckets === 5 ? FIFTHS[a.bucket - 1] : `quantile ${a.bucket} of ${a.buckets}`;
+}
+
+function zRange(a) {
+  if (!isNum(a.z_low)) return `z below ${signed(a.z_high, 1)}`;
+  if (!isNum(a.z_high)) return `z above ${signed(a.z_low, 1)}`;
+  return `z ${signed(a.z_low, 1)} to ${signed(a.z_high, 1)}`;
+}
+
+function significant(a) {
+  return Boolean(a && (a.ci_low_pct > 0 || a.ci_high_pct < 0));
+}
+
+function rangeText(a) {
+  return `${sp(a.ci_low_pct)} to ${sp(a.ci_high_pct)}`;
+}
+
+// The latest move in words, for tooltips
+function moveText(coin, h, name) {
+  return `Last ${name}: ${sp(h.return_pct)} over ${h.candles} ${h.interval} candles. A typical ${name} move is ±${formatNumber(h.typical_move_pct, 2)}% (one standard deviation, from the last ${formatNumber(momentumOf(coin).vol_days, 0)} days), so this is z ${signed(h.z, 2)}: above ${formatNumber(h.percentile, 0)}% of the ${(h.history_candles || 0).toLocaleString()} past ${name} moves on this chart.`;
+}
+
+// What followed moves like the latest one, in words
+function afterText(a, name) {
+  return `After past ${name} moves in the ${fifthText(a)} (${zRange(a)}), the next ${name} averaged ${sp(a.mean_pct, 3)} (median ${sp(a.median_pct, 3)}) and rose ${pct(a.hit_rate)} of the time; over every ${name} window: ${sp(a.all_mean_pct, 3)}, up ${pct(a.all_hit_rate)}. 95% range of the mean ${rangeText(a)}; ${a.n.toLocaleString()} windows, about ${Math.round(a.windows)} that don't overlap.`;
+}
+
+// The selected horizon's verdict. Mirrors momentum_signal in stats/momentum.py.
+function signalVerdict(coin, name = currentTimeframe) {
+  const h = horizonOf(coin, name);
+  const m = momentumOf(coin);
+  const fees = `${formatNumber(m.round_trip_pct, 2)}%`;
+  if (!hasMove(h)) {
+    return { state: "idle", label: "No data", pill: "pill-neutral", why: `Not enough ${name} history on hand yet.` };
   }
-  const chance = isNum(s.probability)
-    ? `${pct(s.probability)} win chance at ${s.target_r}R, ${pct(s.break_even)} needed after fees`
-    : null;
-  if (s.state !== "waiting") {
-    const what = {
-      in_trade: `the limit filled at ${whenText(s.filled_at)}; the trade runs until the stop or ${s.target_r}R.`,
-      won: `filled, then reached ${s.target_r}R.`,
-      lost: "filled, then hit the stop.",
-      timeout: "filled, but reached neither level in time.",
-      expired: "price never came back to the limit.",
-      cancelled: `price ran ${setupsOf(coin).cancel_r || 3}R away before coming back to the limit.`,
-    }[s.state] || "";
-    return { state: "idle", label: STATE_LABELS[s.state] || titleCase(s.state), pill: "pill-neutral", why: `${s.grade} setup ${ago}: ${what}` };
+  const a = h.after;
+  if (h.signal === "LONG" || h.signal === "SHORT") {
+    const up = h.signal === "LONG";
+    const kind = h.kind === "reversal"
+      ? `A reversal: after ${h.z > 0 ? "rises" : "falls"} like this, price tended to turn.`
+      : "A continuation: moves like this tended to keep going.";
+    return {
+      state: up ? "go-long" : "go-short", label: up ? "Long" : "Short", pill: up ? "pill-bull" : "pill-bear",
+      why: `After ${name} moves like this one, the next ${name} averaged ${sp(a.mean_pct)} (95% range ${rangeText(a)}) and rose ${pct(a.hit_rate)} of the time, against ${pct(a.all_hit_rate)} for every window. That clears the ${fees} round trip in fees, in both halves of the history (${sp(a.older_mean_pct)} older, ${sp(a.newer_mean_pct)} newer). ${kind}`,
+    };
   }
-  if (setupsOf(coin).signal === side.toUpperCase()) {
-    return { state: `go-${side}`, label: `${titleCase(side)} signal`, pill: up ? "pill-bull" : "pill-bear", why: `A+ setup ${ago}: ${chance}. The limit waits until ${whenText(s.order_expires)}.` };
-  }
-  if (s.grade !== "A+") {
-    const missing = CHECKLIST.filter(([key]) => !s.checklist[key]).map(([, name]) => name(up, charts).toLowerCase()).join(" and ");
-    return { state: "idle", label: "B setup", pill: "pill-neutral", why: `Limit waiting until ${whenText(s.order_expires)}, but missing ${missing}. Only A+ setups raise a signal.` };
-  }
-  let why;
-  if (!chance) why = "The rules found it. Train the models to see its win chance and its track record.";
-  else if (s.probability < s.break_even) why = `${chance}: below break-even.`;
-  else if (!s.validated) why = `${chance}, but ${recordText(servedReplay(targetEvidence(coin, s.target_r)))}.`;
-  else why = `${chance}, but the ${up ? "short" : "long"} setup is stronger.`;
-  return { state: "unproven", label: "A+ setup", pill: "pill-warn", why };
+  const why = {
+    flat: () => `The last ${name} move (z ${signed(h.z, 1)}) is in the middle fifth of past ${name} moves: nothing to read from it.`,
+    few: () => a
+      ? `Only about ${Math.round(a.windows)} non-overlapping ${name} windows behind moves like this (needs ${m.min_windows}).`
+      : `Too little ${name} history to compare with.`,
+    noise: () => `After moves like this the next ${name} averaged ${sp(a.mean_pct)}, but its 95% range ${rangeText(a)} includes zero: no edge over chance.`,
+    fees: () => `After moves like this the next ${name} averaged ${sp(a.mean_pct)} (95% range ${rangeText(a)}): real, but smaller than the ${fees} round trip in fees.`,
+    unstable: () => `After moves like this the next ${name} averaged ${sp(a.mean_pct)}, but ${sp(a.older_mean_pct)} in the older half of the history and ${sp(a.newer_mean_pct)} in the newer: it didn't hold.`,
+  }[h.reason];
+  const label = { flat: "Flat", few: "Thin data" }[h.reason] || "No edge";
+  return { state: "idle", label, pill: "pill-neutral", why: why ? why() : "" };
 }
 
 function signalPill(coin) {
-  if (!coin.has_data) return `<span class="pill pill-neutral">Loading</span>`;
-  const signal = setupsOf(coin).signal;
-  if (signal === "LONG") return `<span class="pill pill-bull">Long</span>`;
-  if (signal === "SHORT") return `<span class="pill pill-bear">Short</span>`;
-  const side = ["long", "short"].find((s) => isWaitingAPlus(setupOf(coin, s)));
-  if (side) {
-    const v = setupVerdict(coin, side);
-    return `<span class="pill pill-warn" data-tooltip-title="A+ ${side} setup, no signal" data-tooltip="${esc(v.why)}">A+ setup</span>`;
+  if (!coin.has_data) {
+    if (isBusy(coin)) return `<span class="pill pill-warn">${esc(loadingStage(coin))}</span>`;
+    if (coin.status === "failed") {
+      return `<span class="pill pill-neutral" data-tooltip-title="Download failed" data-tooltip="${esc(coin.error || "")}">Failed</span>`;
+    }
+    return `<span class="pill pill-neutral">Loading</span>`;
   }
-  if (!coin.setup_model) {
-    const busy = isBusy(coin);
-    return `<span class="pill ${busy ? "pill-warn" : "pill-neutral"}">${busy ? trainingVerb(coin) : "No model"}</span>`;
-  }
-  return `<span class="pill pill-neutral">Neutral</span>`;
+  const v = signalVerdict(coin);
+  return `<span class="pill ${v.pill}" data-tooltip-title="${esc(`${currentTimeframe} momentum · ${v.label}`)}" data-tooltip="${esc(v.why)}">${esc(v.label)}</span>`;
 }
 
-function levelsLine(s) {
-  return `Limit ${formatPrice(s.entry)} · stop ${formatPrice(s.stop)} · ${s.target_r}R ${formatPrice(s.take_profit)}`;
+function emptyCell(cls, sub = "") {
+  return `<div class="${cls}"><span class="val val-muted">—</span>${sub ? `<div class="cell-sub">${esc(sub)}</div>` : ""}</div>`;
 }
 
-function setupCell(coin, side) {
-  const cls = `c-${side} num`;
-  if (!coin.has_data) return `<div class="${cls}"><span class="val val-muted">—</span></div>`;
-  const s = setupOf(coin, side);
-  if (!s) return `<div class="${cls}"><span class="val val-muted">—</span><div class="cell-sub">no setup</div></div>`;
-  const v = setupVerdict(coin, side);
-  const live = s.state === "waiting";
-  const tone = v.state.startsWith("go-") ? (side === "long" ? "val-pos" : "val-neg")
-    : (live && s.grade === "A+" ? "val-flat" : "val-muted");
-  const main = live && isNum(s.probability) ? pct(s.probability) : s.grade;
-  const sub = live
-    ? (isNum(s.probability) ? `${s.grade} · needs ${pct(s.break_even)}` : "waiting")
-    : `${STATE_SHORT[s.state] || s.state} · ${agoText(s.candles_ago, intervalMinutes(chartsOf(coin).entry)).replace(" ago", "")}`;
+function waitingNote(coin) {
+  if (isBusy(coin)) return "downloading…";
+  if (coin.status === "failed") return "download failed";
+  return coin.has_data ? "too little history" : "";
+}
+
+function moveCell(coin) {
+  const cls = "c-move num";
+  const h = horizonOf(coin);
+  if (!hasMove(h)) return emptyCell(cls, waitingNote(coin));
+  const tone = Math.abs(h.z) >= 1 ? toneClass(h.return_pct) : "val-flat";
   return `
-    <div class="${cls}" data-tooltip-title="${esc(`${titleCase(side)} ${s.grade} setup · ${STATE_LABELS[s.state] || s.state}`)}" data-tooltip="${esc(`${v.why}\n${levelsLine(s)}`)}">
-      <span class="val val-lg ${tone}">${esc(main)}</span>
-      <div class="cell-sub">${esc(sub)}</div>
+    <div class="${cls}" data-tooltip-title="${esc(`Move · last ${currentTimeframe}`)}" data-tooltip="${esc(moveText(coin, h, currentTimeframe))}">
+      <span class="val val-lg ${tone}">${sp(h.return_pct)}</span>
+      <div class="cell-sub">z ${signed(h.z, 1)} · ${pctile(h.percentile)} pct</div>
     </div>`;
 }
 
-function structureLines(v, label) {
-  const lb = v.last_break;
-  const minutes = intervalMinutes(v.interval);
-  return [
-    `${label}: trend ${trendText(v.trend).toLowerCase()}`
-      + (lb ? `, last ${lb.kind} ${lb.direction} through ${formatPrice(lb.level)} ${agoText(lb.candles_ago, minutes)}` : ", no break yet"),
-    `  swing high ${formatPrice(v.swing_high)} · swing low ${formatPrice(v.swing_low)} · ${(v.gaps || []).length} open gaps nearby`,
-  ];
+function nextCell(coin) {
+  const cls = "c-next num";
+  const h = horizonOf(coin);
+  const a = h && h.after;
+  if (!a) return emptyCell(cls, waitingNote(coin));
+  const tone = significant(a) ? toneClass(a.mean_pct, 2) : "val-flat";
+  return `
+    <div class="${cls}" data-tooltip-title="${esc(`Next ${currentTimeframe} after similar moves`)}" data-tooltip="${esc(afterText(a, currentTimeframe))}">
+      <span class="val val-lg ${tone}">${sp(a.mean_pct)}</span>
+      <div class="cell-sub">${pct(a.hit_rate)} up · ${significant(a) ? "significant" : "noise"}</div>
+    </div>`;
 }
 
-function trendCell(coin) {
-  const st = coin.structure || {};
-  if (!st.htf || !st.ltf) return `<div class="c-trend"><span class="val-muted">—</span></div>`;
-  const inside = (st.htf.gaps || []).find((g) => g.contains_price);
-  const sub = inside ? `in ${st.htf.interval} ${inside.direction} gap` : `${(st.htf.gaps || []).length} ${st.htf.interval} gaps near`;
-  const tip = [...structureLines(st.htf, st.htf.interval), ...structureLines(st.ltf, st.ltf.interval)].join("\n");
+function characterText(h, name) {
+  const p = h.persistence || {};
+  const c = CHARACTER[p.character];
+  return [
+    `Variance ratio ${formatNumber(p.vr, 2)} (z ${signed(p.vr_z, 1)}, ${pText(p.vr_p)}): ${c ? c.note : "not enough history"}. Above 1 is trending, below 1 reverting.`,
+    `Last ${name} move against the next ${name}: correlation ${signed(p.ic, 3)} (t ${signed(p.ic_t, 1)}, ${pText(p.ic_p)}).`,
+  ].join("\n");
+}
+
+function characterCell(coin) {
+  const cls = "c-char";
+  const h = horizonOf(coin);
+  const p = h && h.persistence;
+  if (!p || !p.character) return emptyCell(cls, waitingNote(coin));
+  const c = CHARACTER[p.character];
   return `
-    <div class="c-trend" data-tooltip-title="Market structure" data-tooltip="${esc(tip)}">
-      <span class="trend-pair">
-        <span><small>${esc(st.htf.interval)}</small> <span class="${trendClass(st.htf.trend)}">${trendText(st.htf.trend)}</span></span>
-        <span><small>${esc(st.ltf.interval)}</small> <span class="${trendClass(st.ltf.trend)}">${trendText(st.ltf.trend)}</span></span>
-      </span>
-      <div class="cell-sub">${esc(sub)}</div>
+    <div class="${cls}" data-tooltip-title="${esc(`Character · ${currentTimeframe}`)}" data-tooltip="${esc(characterText(h, currentTimeframe))}">
+      <span class="val ${p.character === "random" ? "val-flat" : ""}">${esc(c.label)}</span>
+      <div class="cell-sub">VR ${formatNumber(p.vr, 2)} · ${pText(p.vr_p)}</div>
+    </div>`;
+}
+
+function flowCell(coin) {
+  const h = horizonOf(coin);
+  const f = h && h.flow;
+  if (!f) return `<div class="c-flow"><div class="book-bar is-empty"></div><div class="cell-sub">${esc(waitingNote(coin) || "No volume data")}</div></div>`;
+  const lean = f.percentile >= 80 ? " val-pos" : (f.percentile <= 20 ? " val-neg" : "");
+  const width = Math.max(5, Math.min(95, f.buy_pct));
+  return `
+    <div class="c-flow" data-tooltip-title="${esc(`Taker flow · last ${currentTimeframe}`)}" data-tooltip="${esc(`Market buys took ${formatNumber(f.buy_pct, 1)}% of the traded value over the last ${currentTimeframe} (the rest were market sells): more buying than ${formatNumber(f.percentile, 0)}% of past ${currentTimeframe} windows.`)}">
+      <div class="book-bar"><span class="book-bid" style="width:${width}%"></span><span class="book-ask"></span></div>
+      <div class="cell-sub${lean}">${formatNumber(f.buy_pct, 0)}% buys · ${pctile(f.percentile)} pct</div>
     </div>`;
 }
 
@@ -526,57 +488,12 @@ function bookCell(depth) {
     </div>`;
 }
 
-function riskData(coin, horizon = currentTimeframe) {
-  return (coin.trade_risk || {})[horizon] || null;
-}
-
-// Volatility regime from the risk payload: name, how sure, and the chance of a stormy stretch ahead
-function regimeLines(r, horizon = currentTimeframe) {
-  if (!r || !r.regime) return [];
-  const probs = r.regime_probs || {};
-  const others = Object.keys(probs).filter((k) => k !== r.regime).map((k) => `${k} ${pct(probs[k])}`).join(", ");
-  return [
-    `Volatility regime: ${r.regime} (${pct(probs[r.regime])}${others ? `; ${others}` : ""}), from a hidden Markov model of recent returns.`,
-    `Chance of a stormy stretch within ${horizon}: ${pct(r.storm_chance)}.`,
-  ];
-}
-
-function worstMoveText(side, d) {
-  return `${side === "long" ? "−" : "+"}${formatNumber(d.worst_move_pct, 2)}%`;
-}
-
-function riskTip(r) {
-  const line = (side, name) => {
-    const d = r[side];
-    return `${name} ${worstMoveText(side, d)} worst case · riskier than ${d.score}% of recent windows · max ${d.max_leverage}x`;
-  };
-  const notes = [...new Set(["long", "short"].map((side) => (RISK_STATUS[r[side].status] || {}).note).filter(Boolean))];
-  return [line("long", "Long"), line("short", "Short"), ...regimeLines(r), ...notes].join("\n");
-}
-
-function riskCell(coin) {
-  if (!coin.has_data) return `<div class="c-risk"><span class="val-muted">—</span></div>`;
-  const r = riskData(coin);
-  if (!r || !r.long || !r.short) {
-    return `<div class="c-risk"><span class="val-muted">—</span><div class="cell-sub">${esc(trainingNote(coin))}</div></div>`;
-  }
-  const bias = (BIAS_LABELS[r.bias] || BIAS_LABELS.BALANCED).label;
-  return `
-    <div class="c-risk" data-tooltip-title="Worst 5% of moves within ${esc(currentTimeframe)} · ${esc(bias.toLowerCase())}" data-tooltip="${esc(riskTip(r))}">
-      <span class="risk-pair">
-        <span class="risk-num ${riskLevelClass(r.long.level)}"><small>L</small>${r.long.score}</span>
-        <span class="risk-num ${riskLevelClass(r.short.level)}"><small>S</small>${r.short.score}</span>
-      </span>
-      <div class="cell-sub">Max ${r.long.max_leverage}x / ${r.short.max_leverage}x</div>
-    </div>`;
-}
-
 // ───────── Expanded details ─────────
 //
-// Only what decides a trade, in this order: the live A+ setup's orders (or what the next one needs),
-// whether trading every A+ setup made money on this coin, and the levels the next setup comes from.
+// The selected horizon's verdict and its numbers first, then every horizon side by side,
+// then the supporting signals.
 
-function tradeStat(label, value, sub = "", tip = null, valueClass = "") {
+function stat(label, value, sub = "", tip = null, valueClass = "") {
   const attrs = tip ? ` data-tooltip-title="${esc(tip.title)}" data-tooltip="${esc(tip.body)}"` : "";
   return `
     <div class="trade-stat"${attrs}>
@@ -586,241 +503,165 @@ function tradeStat(label, value, sub = "", tip = null, valueClass = "") {
     </div>`;
 }
 
-function targetsTip(s, up) {
-  const rows = (s.targets || []).map((t) => {
-    const mark = t.target_r === s.target_r ? "▸ " : "";
-    const odds = isNum(t.probability)
-      ? ` · ${pct(t.probability)} win (${t.probability_source === "model" ? "models" : "rules' win rate"}), needs ${pct(t.break_even)} · ${signed(t.expected_r, 2)}R expected`
-      : "";
-    return `${mark}${t.target_r}R at ${formatPrice(t.price)} (${up ? "+" : "−"}${formatNumber(s.risk_pct * t.target_r, 2)}%)${odds}`;
-  });
-  const how = isNum(s.probability)
-    ? "The target with the highest expected result after fees is picked."
-    : "Train the models to see each target's win chance.";
-  return { title: "Take-profit · multiples of the risk (R)", body: [how, ...rows].join("\n") };
-}
-
-// A+ setups the strategy would act on now: a limit still waiting, or a filled trade still running
-function liveSides(coin) {
-  return ["long", "short"].filter((side) => {
-    const s = setupOf(coin, side);
-    return s && s.grade === "A+" && (s.state === "waiting" || s.state === "in_trade");
-  });
-}
-
-function liveTrade(coin, side) {
-  const s = setupOf(coin, side);
-  const up = side === "long";
-  const charts = chartsOf(coin);
-  const filled = s.state === "in_trade";
-  const v = filled
-    ? { state: "idle", label: "In trade", pill: "pill-neutral", why: `Filled ${whenText(s.filled_at)}. Leave it: the stop or the ${s.target_r}R target closes it.` }
-    : setupVerdict(coin, side);
-  const checks = CHECKLIST.map(([, name]) => `✓ ${name(up, charts)}`).join("\n");
-  const price = Number(coin.current_price);
-  const away = isNum(price) && price ? `${signed((s.entry / price - 1) * 100, 2)}% from price` : "";
-  const entrySub = filled ? `filled ${whenText(s.filled_at)}` : away;
-  const entryTip = {
-    title: "Entry · limit order",
-    body: `Midpoint of the ${charts.entry} fair value gap ${formatPrice(s.gap.bottom)} – ${formatPrice(s.gap.top)}. The order waits until ${whenText(s.order_expires)} and is cancelled if price runs ${setupsOf(coin).cancel_r || 3}R away before filling.`,
-  };
-  const stopTip = {
-    title: "Stop",
-    body: `Just ${up ? "below the low" : "above the high"} of the pullback before the ${charts.entry} change of character through ${formatPrice(s.choch_level)}. Its distance from the entry is the risk, 1R.`,
-  };
-  const chanceTip = {
-    title: "Win chance once filled",
-    body: isNum(s.probability)
-      ? [`Chance the ${s.target_r}R target is reached before the stop.`,
-        s.probability_source === "model" ? "From the models, which beat the rules on setups they never saw." : "The rules' own win rate for A+ setups: the models did not beat it.",
-        `Needs ${pct(s.break_even)}: the win rate at which a trade makes nothing after fees.`].join("\n")
-      : "Appears once the models are trained on this coin's history.",
-  };
-  const sizeTip = {
-    title: "Position size for 1% account risk",
-    body: `1% of the account divided by the ${formatNumber(s.risk_pct, 2)}% stop distance: a position worth ${formatNumber(s.size_for_1pct_risk, 2)}× the account (a ${formatUsdCompact(1000 * s.size_for_1pct_risk)} position risks $10 of a $1,000 account).\nMax ${s.max_leverage}x: the highest of 1, 2, 3, 5, 10 or 20x whose liquidation price stays beyond the stop.`,
-  };
-  const clears = isNum(s.probability) && s.probability >= s.break_even;
-  return `
-    <div class="trade-side is-${v.state}">
-      <div class="trade-head">
-        <span>${up ? "Long" : "Short"}</span>
-        <span class="pill ${v.pill}" data-tooltip-title="A+ setup · all four checks pass" data-tooltip="${esc(checks)}">${esc(v.label)}</span>
-      </div>
-      <p class="trade-why">${esc(v.why)}</p>
+function verdictBlock(coin) {
+  const name = currentTimeframe;
+  const h = horizonOf(coin);
+  if (!coin.has_data || !h) return "";
+  const v = signalVerdict(coin);
+  const a = h.after;
+  const vs = h.versus;
+  const f = h.flow;
+  const base = vs ? splitSymbol(vs.symbol).base : "";
+  const stats = hasMove(h) ? `
       <div class="trade-stats">
-        ${tradeStat("Entry · limit", formatPrice(s.entry), esc(entrySub), entryTip)}
-        ${tradeStat("Stop", formatPrice(s.stop), `${up ? "−" : "+"}${formatNumber(s.risk_pct, 2)}% · 1R`, stopTip, "is-sl")}
-        ${tradeStat("Target", formatPrice(s.take_profit), `${up ? "+" : "−"}${formatNumber(s.risk_pct * s.target_r, 2)}% · ${s.target_r}R`, targetsTip(s, up), "is-tp")}
-        ${tradeStat("Win chance", isNum(s.probability) ? pct(s.probability) : "—", isNum(s.probability) ? `needs ${pct(s.break_even)}` : esc(trainingNote(coin)), chanceTip, clears ? "is-tp" : "")}
-        ${tradeStat("Size · × account", `${formatNumber(s.size_for_1pct_risk, 1)}×`, `1% risk · max ${s.max_leverage}x`, sizeTip)}
-      </div>
-    </div>`;
-}
-
-// No live A+ setup: what the next one needs, from the context chart's trend and its nearest gap
-function waitingFor(coin) {
-  const ctx = (coin.structure || {}).htf;
-  const charts = chartsOf(coin);
-  const price = Number(coin.current_price);
-  if (!ctx) return "Waiting for candles.";
-  if (ctx.trend !== "up" && ctx.trend !== "down") return `No ${ctx.interval} trend yet: waiting for a ${ctx.interval} break of structure.`;
-  const up = ctx.trend === "up";
-  const dir = up ? "bullish" : "bearish";
-  const flip = `a ${charts.entry} change of character ${up ? "up" : "down"}`;
-  const zone = (ctx.gaps || [])
-    .filter((g) => g.direction === dir && (g.contains_price || !isNum(price) || (up ? g.top <= price : g.bottom >= price)))
-    .sort((a, b) => Math.abs(a.mid - price) - Math.abs(b.mid - price))[0];
-  const trend = `${ctx.interval} trend ${up ? "up" : "down"}`;
-  if (!zone) return `${trend}, but no open ${ctx.interval} ${dir} gap ${up ? "below" : "above"} price to pull back into.`;
-  const range = `${formatPrice(zone.bottom)} – ${formatPrice(zone.top)}`;
-  if (zone.contains_price) return `${trend}, price is inside the ${ctx.interval} ${dir} gap ${range}: waiting for ${flip}.`;
-  const edge = up ? zone.top : zone.bottom;
-  const away = isNum(price) && price ? ` (${formatNumber(Math.abs(edge / price - 1) * 100, 1)}% away)` : "";
-  return `${trend}: waiting for a pullback into the ${ctx.interval} ${dir} gap ${range}${away}, then ${flip}.`;
-}
-
-// The latest setup of each side the trade panel is not showing, in a few words
-function lastSetups(coin, shown) {
-  const minutes = intervalMinutes(chartsOf(coin).entry);
-  return ["long", "short"].filter((side) => !shown.includes(side)).map((side) => {
-    const s = setupOf(coin, side);
-    if (!s) return null;
-    const what = s.state === "waiting" ? "limit waiting" : (STATE_SHORT[s.state] || s.state);
-    return `${side} ${s.grade}, ${what} ${agoText(s.candles_ago, minutes)}`;
-  }).filter(Boolean).join(" · ");
-}
-
-function tradeBlock(coin) {
-  const st = setupsOf(coin);
-  if (!coin.has_data || !st.as_of) return "";
-  const charts = chartsOf(coin);
-  const live = liveSides(coin);
-  const body = live.length
-    ? `<div class="sides-grid${live.length === 1 ? " is-single" : ""}">${live.map((side) => liveTrade(coin, side)).join("")}</div>`
-    : `<div class="trade-side is-idle">
-        <div class="trade-head"><span>No trade</span></div>
-        <p class="trade-why">${esc(waitingFor(coin))}</p>
-      </div>`;
-  const last = lastSetups(coin, live);
+        ${stat(`Move · last ${name}`, sp(h.return_pct), `z ${signed(h.z, 1)} · ${pctile(h.percentile)} pct`,
+          { title: "Move", body: moveText(coin, h, name) }, Math.abs(h.z) >= 1 ? toneClass(h.return_pct) : "")}
+        ${stat(`Next ${name} after similar`, a ? sp(a.mean_pct) : "—", a ? `95%: ${rangeText(a)}` : "",
+          a ? { title: "After similar moves", body: afterText(a, name) } : null, significant(a) ? toneClass(a.mean_pct) : "")}
+        ${stat("Rose afterwards", a ? pct(a.hit_rate) : "—", a ? `all windows ${pct(a.all_hit_rate)}` : "",
+          { title: "Share up", body: `How often the next ${name} closed higher after moves like this, against every ${name} window.` })}
+        ${stat(vs ? `vs ${esc(base)} · beta-adjusted` : "vs benchmark", vs ? sp(vs.excess_pct) : "—",
+          vs ? `${esc(base)} ${sp(vs.return_pct)} · β ${formatNumber(vs.beta, 2)}` : "",
+          vs ? { title: `Against ${base}`, body: `The coin's last ${name} return minus ${formatNumber(vs.beta, 2)} × ${base}'s (${sp(vs.return_pct)}): how much it moved on its own. Beta is from ${h.interval} returns over the last ${formatNumber(momentumOf(coin).vol_days, 0)} days.` } : null,
+          vs ? toneClass(vs.excess_pct) : "")}
+        ${stat(`Taker buys · last ${name}`, f ? `${formatNumber(f.buy_pct, 1)}%` : "—", f ? `${pctile(f.percentile)} pct of past ${name}` : "",
+          { title: "Taker flow", body: `Share of the traded value bought with market orders. 50% is balanced.` })}
+      </div>` : "";
   return `
     <section class="detail-block detail-wide trade-block">
-      <h3>Trade · ${esc(charts.context)} context, ${esc(charts.entry)} entry <span class="h3-note">as of ${whenText(st.as_of)}</span></h3>
-      ${body}
-      ${last ? `<p class="trade-foot">Last setups: ${esc(last)}</p>` : ""}
+      <h3>Momentum · ${esc(name)} <span class="h3-note">as of ${whenText(h.as_of)} · ${esc(h.candles)} × ${esc(h.interval)} candles · fees ${formatNumber(momentumOf(coin).round_trip_pct, 2)}% round trip</span></h3>
+      <div class="trade-side is-${v.state}">
+        <div class="trade-head"><span>${esc(name)} momentum</span><span class="pill ${v.pill}">${esc(v.label)}</span></div>
+        <p class="trade-why">${esc(v.why)}</p>
+        ${stats}
+      </div>
     </section>`;
 }
 
-// Account equity after each backtested trade, from 100; the dashed line is where it started
-function equitySvg(points) {
-  if (!points || points.length < 2) return "";
-  const w = 160, h = 28, pad = 2;
-  const eq = points.map((p) => p.equity);
-  const lo = Math.min(100, ...eq), hi = Math.max(100, ...eq);
-  const y = (v) => (pad + (hi - v) / ((hi - lo) || 1) * (h - 2 * pad)).toFixed(1);
-  const line = eq.map((v, i) => `${(i / (eq.length - 1) * w).toFixed(1)},${y(v)}`).join(" ");
-  const last = eq[eq.length - 1];
+function horizonRow(coin, name) {
+  const h = horizonOf(coin, name);
+  const current = name === currentTimeframe ? " is-current" : "";
+  const pick = `onclick="event.stopPropagation(); setTimeframe('${name}')"`;
+  if (!hasMove(h)) {
+    return `<tr class="hz-row${current}" ${pick}><td><strong>${name}</strong></td><td colspan="7" class="val-muted">Not enough history</td></tr>`;
+  }
+  const a = h.after;
+  const p = h.persistence || {};
+  const v = signalVerdict(coin, name);
+  const c = CHARACTER[p.character];
   return `
-    <svg class="equity" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img"
-         aria-label="Account from 100 to ${formatNumber(last, 1)}">
-      <line class="equity-base" x1="0" x2="${w}" y1="${y(100)}" y2="${y(100)}" />
-      <polyline class="equity-line ${last >= 100 ? "is-up" : "is-down"}" points="${line}" />
-    </svg>`;
-}
-
-function backtestRow(bt) {
-  const s = bt.summary || {};
-  if (!s.trades) return `<tr><td><strong>${s.target_r}R</strong></td><td colspan="6" class="val-muted">No filled A+ trades</td></tr>`;
-  return `
-    <tr>
-      <td><strong>${s.target_r}R</strong></td>
-      <td class="num">${s.trades}</td>
-      <td class="num">${pct(s.win_rate, 1)} <span class="val-muted">/ ${pct(s.break_even_win_rate, 1)}</span></td>
-      <td class="num"><strong class="bt-avg ${toneClass(s.avg_net_r)}">${signed(s.avg_net_r, 2)}R</strong></td>
-      <td class="num ${toneClass(s.total_return_pct, 1)}">${signed(s.total_return_pct, 1)}%</td>
-      <td class="num">${formatNumber(s.max_drawdown_pct, 1)}%</td>
-      <td class="spark">${equitySvg(bt.equity)}</td>
+    <tr class="hz-row${current}" ${pick}>
+      <td><strong>${name}</strong> <span class="val-muted">${esc(h.interval)}</span></td>
+      <td class="num"><span class="${Math.abs(h.z) >= 1 ? toneClass(h.return_pct) : ""}">${sp(h.return_pct)}</span> <span class="val-muted">z ${signed(h.z, 1)} · ${pctile(h.percentile)}</span></td>
+      <td class="num" data-tooltip-title="After similar moves" data-tooltip="${a ? esc(afterText(a, name)) : ""}">${a ? `<strong class="${significant(a) ? toneClass(a.mean_pct) : ""}">${sp(a.mean_pct)}</strong> <span class="val-muted">${rangeText(a)}</span>` : "—"}</td>
+      <td class="num">${a ? `${pct(a.hit_rate)} <span class="val-muted">/ ${pct(a.all_hit_rate)}</span>` : "—"}</td>
+      <td class="num">${a ? `${sp(a.older_mean_pct)} <span class="val-muted">/</span> ${sp(a.newer_mean_pct)}` : "—"}</td>
+      <td class="num">${signed(p.ic, 3)} <span class="val-muted">${pText(p.ic_p)}</span></td>
+      <td class="num" data-tooltip-title="Character" data-tooltip="${esc(characterText(h, name))}">${formatNumber(p.vr, 2)} <span class="val-muted">${c ? c.label : ""}</span></td>
+      <td><span class="pill pill-sm ${v.pill}" data-tooltip-title="${esc(`${name} · ${v.label}`)}" data-tooltip="${esc(v.why)}">${esc(v.label)}</span></td>
     </tr>`;
 }
 
-// Every A+ setup on the training history, taken one at a time: does the strategy make money on this coin?
-function backtestBlock(coin) {
-  const ev = coin.setup_model;
-  const bts = ev && ev.backtests ? Object.values(ev.backtests) : [];
-  if (!bts.length) return "";
-  const s = bts[0].summary || {};
-  const best = Math.max(...bts.map((bt) => (bt.summary && bt.summary.trades ? bt.summary.avg_net_r : -Infinity)));
-  const verdict = !isFinite(best) ? ["No trades", ""]
-    : best > 0.05 ? ["Made money", "tag-pos"] : best < -0.05 ? ["Lost money", "tag-neg"] : ["Break-even", "tag-warn"];
-  const years = s.days >= 365 ? `${formatNumber(s.days / 365, 1)} years` : `${Math.round(s.days || 0)} days`;
-  const few = bts.some((bt) => bt.summary && bt.summary.trades && bt.summary.trades < 100)
-    ? `<p class="trade-foot">Under 100 trades: treat these rates as rough.</p>` : "";
+function horizonsBlock(coin) {
+  const horizons = momentumOf(coin).horizons || {};
+  if (!coin.has_data || !Object.keys(horizons).length) return "";
   return `
     <section class="detail-block detail-wide detail-table">
-      <h3>Backtest · every A+ setup <span class="h3-note">${years} of ${esc(s.entry_interval)} candles · 1 at a time · ${s.risk_pct}% risk each${feesNote(s.costs)}</span> <span class="tag ${verdict[1]}">${verdict[0]}</span></h3>
-      <table class="data-table">
+      <h3>Every horizon <span class="h3-note">click a row to select it</span></h3>
+      <table class="data-table hz-table">
         <thead>
           <tr>
-            <th>Target</th><th class="num">Trades</th>
-            <th class="num" data-tooltip-title="Won / needed" data-tooltip="Share of filled trades that reached the target first, and the win rate needed to break even after fees.">Won / needed</th>
-            <th class="num" data-tooltip-title="Average trade" data-tooltip="Average result per trade in multiples of the risk (R), after fees.">Avg trade</th>
-            <th class="num" data-tooltip-title="Account" data-tooltip="The account's change over the whole history, compounding.">Account</th>
-            <th class="num" data-tooltip-title="Max drawdown" data-tooltip="Largest fall of the account from a high.">Max drawdown</th>
-            <th>Equity</th>
+            <th>Horizon</th>
+            <th class="num" data-tooltip-title="Move" data-tooltip="Return over the last horizon, its z (the move in units of a typical move of that length) and its percentile among past moves.">Last move</th>
+            <th class="num" data-tooltip-title="Next, after similar moves" data-tooltip="Mean return over the next horizon after past moves in the same fifth as the latest one, with the 95% range of that mean.">Next, after similar</th>
+            <th class="num" data-tooltip-title="Rose / all" data-tooltip="How often the next horizon closed higher after similar moves, and after every window.">Rose / all</th>
+            <th class="num" data-tooltip-title="Older / newer" data-tooltip="The same mean in the older and the newer half of the history. A real effect should show in both.">Older / newer</th>
+            <th class="num" data-tooltip-title="Past → next correlation" data-tooltip="Correlation of each move with the move that followed it, over the whole history (information coefficient). Positive: momentum. Negative: reversal.">Past → next</th>
+            <th class="num" data-tooltip-title="Variance ratio" data-tooltip="Lo–MacKinlay variance ratio: variance of moves this long over the variance a random walk would give. Above 1 trending, below 1 reverting.">Var. ratio</th>
+            <th>Signal</th>
           </tr>
         </thead>
-        <tbody>${bts.map(backtestRow).join("")}</tbody>
+        <tbody>${HORIZONS.map((name) => horizonRow(coin, name)).join("")}</tbody>
       </table>
-      ${few}
     </section>`;
 }
 
-function breakText(v) {
-  const lb = v.last_break;
-  return lb ? `${lb.kind} ${lb.direction} through ${formatPrice(lb.level)}, ${agoText(lb.candles_ago, intervalMinutes(v.interval))}` : "no break yet";
+function rsiText(v) {
+  if (!isNum(v)) return `<span class="val-muted">—</span>`;
+  const cls = v >= 70 || v <= 30 ? "val-warn" : "";
+  return `<strong class="${cls}">${formatNumber(v, 0)}</strong>`;
 }
 
-// The levels the next setup comes from: both charts' trend and last break, the context chart's nearest gaps
-function levelsBlock(coin) {
-  const st = coin.structure || {};
-  if (!st.htf || !st.ltf) return "";
-  const price = Number(coin.current_price);
-  const nearest = (dir) => (st.htf.gaps || []).filter((g) => g.direction === dir)
-    .sort((a, b) => Math.abs(a.mid - price) - Math.abs(b.mid - price))[0];
-  const gaps = [["bullish", "▲", "val-pos"], ["bearish", "▼", "val-neg"]].map(([dir, mark, cls]) => {
-    const g = nearest(dir);
-    return g ? `<span class="${cls}">${mark} ${formatPrice(g.bottom)} – ${formatPrice(g.top)}</span>${g.contains_price ? " <span class=\"val-muted\">price inside</span>" : ""}` : "";
-  }).filter(Boolean).join(" &nbsp; ");
-  const chart = (v, role) => `
-      <li><span class="lvl-chart">${esc(v.interval)} <small>${role}</small></span>
-        <span><strong class="${trendClass(v.trend)}">${trendText(v.trend)}</strong> <span class="val-muted">· ${esc(breakText(v))}</span></span></li>`;
+// The supporting signals: RSI, moving-average stack, ranges, volatility, volume, funding, order book
+function signalsBlock(coin) {
+  const s = coin.signals || {};
+  if (!coin.has_data || !Object.keys(s).length) return "";
+  const rows = [];
+  const rsi = s.rsi || {};
+  rows.push(["RSI 14", Object.keys(rsi).map((iv) => `${esc(iv)} ${rsiText(rsi[iv])}`).join(" &nbsp; "),
+    "Wilder's relative strength index on closed candles. Above 70 is stretched up, below 30 stretched down."]);
+  if (s.ema) {
+    const e = s.ema.ema || {};
+    const stack = { up: ["Up stack", "val-pos"], down: ["Down stack", "val-neg"], mixed: ["Mixed", ""] }[s.ema.stack] || ["—", ""];
+    rows.push([`Trend ${esc(s.ema.interval)}`,
+      `<strong class="${stack[1]}">${stack[0]}</strong> <span class="val-muted">· price ${sp(s.ema.vs_slowest_pct, 1)} vs EMA 200</span>`,
+      `Price against its 20, 50 and 200-candle exponential moving averages (${formatPrice(e["20"])}, ${formatPrice(e["50"])}, ${formatPrice(e["200"])}). Up stack: price > EMA20 > EMA50 > EMA200.`]);
+  }
+  const ranges = s.ranges || {};
+  const rangeParts = Object.keys(ranges).filter((k) => ranges[k]).map((k) => `${esc(k)} <strong>${pct(ranges[k].position)}</strong>`);
+  if (rangeParts.length) {
+    const tip = Object.keys(ranges).filter((k) => ranges[k]).map((k) => `${k}: ${formatPrice(ranges[k].low)} – ${formatPrice(ranges[k].high)}`).join("\n");
+    rows.push(["Range", rangeParts.join(" &nbsp; "), `Where price sits between the low (0%) and high (100%) of each window.\n${tip}`]);
+  }
+  if (s.volatility) {
+    rows.push(["Volatility", `<strong>${formatNumber(s.volatility.daily_pct, 2)}%</strong> a day <span class="val-muted">· ${pctile(s.volatility.percentile)} pct</span>`,
+      "Realized volatility of the last 24 hours of 15m candles, scaled to a day, and its percentile among every earlier day on hand."]);
+  }
+  if (s.volume) {
+    rows.push(["Volume", `<strong>${formatUsdCompact(s.volume.last_24h_usd)}</strong> in 24h <span class="val-muted">· ${formatNumber(s.volume.ratio, 2)}× the median day</span>`,
+      `Traded value of the last 24 hours against the median of the 30 days before (${formatUsdCompact(s.volume.typical_24h_usd)}).`]);
+  }
+  if (s.funding) {
+    rows.push(["Funding", `<strong class="${toneClass(s.funding.rate_pct, 4)}">${sp(s.funding.rate_pct, 4)}</strong> <span class="val-muted">· ${pctile(s.funding.percentile)} pct of ${s.funding.days} days</span>`,
+      `The latest settled funding rate (per settlement; longs pay shorts when positive). Binance's baseline is +0.0100%. Mean over ${s.funding.days} days ${sp(s.funding.mean_pct, 4)}.`]);
+  }
+  const d = coin.orderbook_depth || {};
+  if (d.available) {
+    rows.push(["Order book", `<strong>${d.bid_pct}%</strong> bids <span class="val-muted">· top 5 ${signed(d.near_imbalance_pct, 0)}% · spread ${formatNumber(d.spread_bps, 2)} bps</span>`,
+      "Resting limit orders on the bid side across the top 20 levels, the bid/ask imbalance of the top 5, and the spread. Display only."]);
+  }
   return `
     <section class="detail-block detail-wide detail-quiet">
-      <h3>Levels</h3>
+      <h3>Signals</h3>
       <ul class="levels">
-        ${chart(st.htf, "context")}
-        ${chart(st.ltf, "entry")}
-        ${gaps ? `<li><span class="lvl-chart" data-tooltip-title="Fair value gaps" data-tooltip="The nearest open ${esc(st.htf.interval)} gaps: where a pullback has to reach for an A+ setup. A gap stays open until a candle closes through its far side.">${esc(st.htf.interval)} <small>gaps</small></span><span>${gaps}</span></li>` : ""}
+        ${rows.map(([label, value, tip]) => `<li><span class="lvl-chart" data-tooltip-title="${esc(label.replace(/<[^>]+>/g, ""))}" data-tooltip="${esc(tip)}">${label}</span><span>${value}</span></li>`).join("")}
       </ul>
     </section>`;
 }
 
+function historyNote(coin) {
+  const hist = coin.history || {};
+  const parts = Object.keys(hist).filter((iv) => hist[iv] && hist[iv].candles)
+    .map((iv) => `${spanText(hist[iv].from)} of ${iv}`);
+  return parts.length ? `Statistics from ${parts.join(" and ")} candles` : "";
+}
+
 function detailsFooter(coin, symbol) {
-  let training;
+  let left;
   if (isBusy(coin)) {
-    const p = coin.training_progress;
-    const bar = p && isNum(p.fraction) && coin.training_status !== "queued"
+    const p = coin.progress;
+    const bar = p && isNum(p.fraction) && coin.status !== "queued"
       ? `<span class="progress-track" aria-hidden="true"><span class="progress-fill" style="width:${Math.round(p.fraction * 100)}%"></span></span>`
       : "";
-    training = `<span class="training-tag">${esc(trainingDetail(coin))}</span>${bar}`;
+    left = `<span class="loading-tag">${esc(loadingDetail(coin))}</span>${bar}`;
   } else {
-    const label = coin.is_custom_trained ? "Retrain" : "Train models";
-    const error = coin.training_error ? `<span class="val-neg">${esc(coin.training_error)}</span>` : "";
-    training = `<button class="btn btn-sm" onclick="trainCoin('${symbol}')">${label}</button>${error}`;
+    const error = coin.status === "failed" && coin.error ? `<span class="val-neg">${esc(coin.error)}</span>` : "";
+    const note = historyNote(coin);
+    left = `<button class="btn btn-sm" onclick="reloadCoin('${symbol}')">${coin.status === "failed" ? "Retry download" : "Reload history"}</button>${error}${note ? `<span class="val-muted">${esc(note)}</span>` : ""}`;
   }
   return `
     <div class="details-footer">
-      ${training}
+      ${left}
       <span class="spacer"></span>
       <a class="text-link" href="${coindcxUrl(symbol)}" target="_blank" rel="noopener noreferrer">Open on CoinDCX ${ICON_EXTERNAL}</a>
       <button class="btn btn-sm btn-ghost-danger" onclick="removeCoin('${symbol}')">Remove</button>
@@ -858,7 +699,7 @@ function renderCoinCard(symbol, flash = false) {
 
   const subParts = [];
   if (coin.sector) subParts.push(esc(sectorLabel(coin.sector)));
-  if (isBusy(coin)) subParts.push(`<span class="training-tag">${esc(trainingStage(coin))}</span>`);
+  if (isBusy(coin)) subParts.push(`<span class="loading-tag">${esc(loadingStage(coin))}</span>`);
 
   card.classList.toggle("is-open", isExpanded);
   card.setAttribute("aria-label", base);
@@ -877,11 +718,11 @@ function renderCoinCard(symbol, flash = false) {
 
       <div class="c-signal">${signalPill(coin)}</div>
 
-      ${setupCell(coin, "long")}
-      ${setupCell(coin, "short")}
-      ${trendCell(coin)}
+      ${moveCell(coin)}
+      ${nextCell(coin)}
+      ${characterCell(coin)}
+      ${flowCell(coin)}
       ${bookCell(coin.orderbook_depth || {})}
-      ${riskCell(coin)}
 
       <div class="c-actions">
         <button class="icon-btn btn-remove" onclick="event.stopPropagation(); removeCoin('${symbol}')" aria-label="Remove ${esc(base)}" title="Remove">${ICON_CLOSE}</button>
@@ -893,9 +734,9 @@ function renderCoinCard(symbol, flash = false) {
     <div class="row-details" id="${detailsId}" ${isExpanded ? "" : "hidden"}>
       ${isExpanded ? `
         <div class="details-grid">
-          ${tradeBlock(coin)}
-          ${backtestBlock(coin)}
-          ${levelsBlock(coin)}
+          ${verdictBlock(coin)}
+          ${horizonsBlock(coin)}
+          ${signalsBlock(coin)}
         </div>
         ${detailsFooter(coin, symbol)}
       ` : ""}
@@ -914,22 +755,16 @@ function updateSummary() {
     return;
   }
   const counts = { LONG: 0, SHORT: 0 };
-  let waiting = 0;  // A+ setups whose limit is still waiting, signal or not
-  let training = 0;
   let downloading = 0;
   coins.forEach((c) => {
-    const signal = setupsOf(c).signal;
-    if (signal in counts) counts[signal]++;
-    waiting += ["long", "short"].filter((side) => isWaitingAPlus(setupOf(c, side))).length;
-    if (c.training_status === "downloading") downloading++;
-    else if (isBusy(c)) training++;
+    const h = horizonOf(c);
+    if (h && h.signal in counts) counts[h.signal]++;
+    if (isBusy(c)) downloading++;
   });
   el.innerHTML = `${coins.length} ${coins.length === 1 ? "pair" : "pairs"} · `
     + `<span class="${counts.LONG ? "sum-pos" : ""}">${counts.LONG} long</span> · `
-    + `<span class="${counts.SHORT ? "sum-neg" : ""}">${counts.SHORT} short</span> · `
-    + `${waiting} A+ ${waiting === 1 ? "setup" : "setups"} waiting`
-    + (downloading ? ` · ${downloading} downloading` : "")
-    + (training ? ` · ${training} training` : "");
+    + `<span class="${counts.SHORT ? "sum-neg" : ""}">${counts.SHORT} short</span> at ${esc(currentTimeframe)}`
+    + (downloading ? ` · ${downloading} downloading` : "");
 }
 
 function renderAll() {
@@ -937,14 +772,14 @@ function renderAll() {
   const symbols = Object.keys(coinsData);
 
   document.querySelectorAll("[data-horizon-label]").forEach((el) => {
-    el.textContent = `${el.dataset.horizonLabel} · ${currentTimeframe}`;
+    el.textContent = el.dataset.horizonLabel.replace("{h}", currentTimeframe);
   });
 
   if (symbols.length === 0) {
     container.innerHTML = `
       <div class="empty-state">
         <h3>Your watchlist is empty</h3>
-        <p>Add a CoinDCX futures pair to start watching its market structure, fair value gaps and setups.</p>
+        <p>Add a CoinDCX futures pair to start watching its momentum statistics.</p>
         <button class="btn btn-primary" onclick="openSidebar()">Add pair <kbd class="hotkey-hint">/</kbd></button>
       </div>
     `;

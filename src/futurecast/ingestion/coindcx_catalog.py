@@ -1,20 +1,18 @@
-"""CoinDCX Futures Instrument Catalog and Search Provider.
-
-Provides structured metadata, sector classification, and benchmark routing
-for CoinDCX derivatives contracts (B-* pairs) and INR spot pairs (I-* pairs).
-The live list is every trading Binance USDT perpetual under its CoinDCX pair name
-(1000PEPEUSDT -> B-1000PEPE_USDT); CoinDCX itself is never queried.
+"""The pairs the add-coin search offers: a curated registry of CoinDCX futures (B-*) and INR
+(I-*) pairs with names and descriptions, plus every trading Binance USDT perpetual under its
+CoinDCX pair name (1000PEPEUSDT -> B-1000PEPE_USDT), each with its sector. CoinDCX itself is
+never queried; the page does the searching.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 import httpx
 
 from futurecast.ingestion.binance import BinancePublicClient
-from futurecast.ingestion.factory import extract_base_and_quote, get_symbol_sector, resolve_benchmarks
+from futurecast.ingestion.factory import extract_base_and_quote, get_symbol_sector
 
 logger = logging.getLogger(__name__)
 
@@ -134,153 +132,34 @@ def _binance_pairs() -> List[str]:
     )
 
 
+def _instrument(symbol: str, name: str, description: str) -> Dict[str, Any]:
+    base = extract_base_and_quote(symbol)[0]
+    url = f"https://coindcx.com/futures/{symbol}" if symbol.startswith("B-") else f"https://coindcx.com/trade/{symbol}"
+    return {"symbol": symbol, "base": base, "name": name, "sector": get_symbol_sector(symbol),
+            "description": description, "coindcx_url": url}
+
+
 def get_all_coindcx_instruments() -> List[Dict[str, Any]]:
-    """Return the curated registry plus every pair with a trading Binance perpetual, enriched with metadata."""
+    """The curated registry, then every pair with a trading Binance perpetual (cached for an hour)."""
     global _ALL_INSTRUMENTS_CACHE, _LAST_FETCH_TIME
     now = time.time()
-
     if _ALL_INSTRUMENTS_CACHE and (now - _LAST_FETCH_TIME) < _CACHE_TTL_SEC:
         return _ALL_INSTRUMENTS_CACHE
 
     raw_symbols = _binance_pairs()
-
     enriched: List[Dict[str, Any]] = []
-    seen_symbols = set()
-
-    # First add all curated registry items (guarantees B-DOGE_USDT, B-SOL_USDT, B-PEPE_USDT, B-ZK_USDT, etc.)
+    seen = set()
     for item in COINDCX_FUTURES_REGISTRY:
         sym = item["symbol"].strip().upper()
-        if sym in seen_symbols:
-            continue
-        seen_symbols.add(sym)
-
-        base, quote = extract_base_and_quote(sym)
-        sector = get_symbol_sector(sym)
-        benchmarks = resolve_benchmarks(sym, "coindcx", sector_aware=True)
-        coindcx_url = f"https://coindcx.com/futures/{sym}" if sym.startswith("B-") else f"https://coindcx.com/trade/{sym}"
-
-        enriched.append({
-            "symbol": sym,
-            "base": base,
-            "quote": quote,
-            "name": item["name"],
-            "sector": sector,
-            "benchmarks": benchmarks,
-            "description": item["description"],
-            "coindcx_url": coindcx_url,
-        })
-
-    # Then merge every pair Binance has a perpetual for
+        if sym not in seen:
+            seen.add(sym)
+            enriched.append(_instrument(sym, item["name"], item["description"]))
     for sym in raw_symbols:
-        s_clean = sym.strip().upper()
-        if s_clean in seen_symbols:
-            continue
-        seen_symbols.add(s_clean)
-
-        base, quote = extract_base_and_quote(s_clean)
-        sector = get_symbol_sector(s_clean)
-        benchmarks = resolve_benchmarks(s_clean, "coindcx", sector_aware=True)
-        name = base
-        description = f"CoinDCX {quote}-Margined Perpetual Contract for {base}."
-        coindcx_url = f"https://coindcx.com/futures/{s_clean}" if s_clean.startswith("B-") else f"https://coindcx.com/trade/{s_clean}"
-
-        enriched.append({
-            "symbol": s_clean,
-            "base": base,
-            "quote": quote,
-            "name": name,
-            "sector": sector,
-            "benchmarks": benchmarks,
-            "description": description,
-            "coindcx_url": coindcx_url,
-        })
+        if sym not in seen:
+            seen.add(sym)
+            base, quote = extract_base_and_quote(sym)
+            enriched.append(_instrument(sym, base, f"CoinDCX {quote}-Margined Perpetual Contract for {base}."))
 
     _ALL_INSTRUMENTS_CACHE = enriched
     _LAST_FETCH_TIME = now if raw_symbols else 0.0  # after a Binance outage, retry on the next search
     return _ALL_INSTRUMENTS_CACHE
-
-
-def clean_search_query(raw_query: Optional[str]) -> str:
-    """Extract symbol or keyword from user input, supporting direct URL paste."""
-    if not raw_query:
-        return ""
-    q = raw_query.strip().lower()
-    # If user pasted a full CoinDCX URL like https://coindcx.com/futures/B-ZK_USDT
-    if "coindcx.com/" in q:
-        parts = q.split("/")
-        q = parts[-1].split("?")[0].split("#")[0].strip()
-    return q
-
-
-def get_coindcx_futures_catalog(
-    query: Optional[str] = None,
-    sector: Optional[str] = None,
-) -> List[Dict[str, Any]]:
-    """Return enriched catalog of CoinDCX futures pairs with search and sector filtering.
-    
-    Includes every pair with a trading Binance perpetual, dynamically resolves symbols like B-ZK_USDT,
-    and handles direct URL paste (e.g. https://coindcx.com/futures/B-ZK_USDT).
-    """
-    all_items = get_all_coindcx_instruments()
-    q = clean_search_query(query)
-    sec_filter = (sector or "").strip().upper()
-
-    results: List[Dict[str, Any]] = []
-
-    for item in all_items:
-        sym = item["symbol"]
-        base = item["base"]
-        name = item["name"]
-        coin_sector = item["sector"]
-        desc = item["description"]
-
-        # Sector filtering
-        if sec_filter and sec_filter != "ALL":
-            if sec_filter == "MEME" and coin_sector != "MEME":
-                continue
-            elif sec_filter == "L1" and coin_sector != "L1":
-                continue
-            elif sec_filter == "DEFI" and coin_sector != "DEFI":
-                continue
-            elif sec_filter == "AI" and coin_sector != "AI":
-                continue
-            elif sec_filter == "NFT" and coin_sector != "NFT_GAMING":
-                continue
-            elif sec_filter == "MAJOR" and coin_sector not in ("MAJOR", "GENERAL_ALT", "INFRA"):
-                continue
-
-        # Query filtering (matches symbol, base, name, description, or sector)
-        if q:
-            match_sym = q in sym.lower()
-            match_base = q == base.lower() or q in base.lower()
-            match_name = q in name.lower()
-            match_desc = q in desc.lower()
-            match_sec = q in coin_sector.lower()
-            if not (match_sym or match_base or match_name or match_desc or match_sec):
-                continue
-
-        results.append(item)
-
-    # Dynamic fallback: If user searched an exact CoinDCX pair not yet in registry, synthesize candidate
-    if q and not results:
-        candidate_sym = q.upper()
-        if not candidate_sym.startswith("B-") and not candidate_sym.startswith("I-"):
-            if candidate_sym.endswith("USDT"):
-                candidate_sym = f"B-{candidate_sym}"
-            else:
-                candidate_sym = f"B-{candidate_sym}_USDT"
-
-        base, quote = extract_base_and_quote(candidate_sym)
-        c_sector = get_symbol_sector(candidate_sym)
-        results.append({
-            "symbol": candidate_sym,
-            "base": base,
-            "quote": quote,
-            "name": base,
-            "sector": c_sector,
-            "benchmarks": resolve_benchmarks(candidate_sym, "coindcx", sector_aware=True),
-            "description": f"CoinDCX {quote}-Margined Perpetual Contract for {base}.",
-            "coindcx_url": f"https://coindcx.com/futures/{candidate_sym}",
-        })
-
-    return results

@@ -1,4 +1,4 @@
-"""futurecast: Air-gapped cross-asset LightGBM residual alpha forecasting engine."""
+"""futurecast: a read-only momentum statistics dashboard for CoinDCX futures, plus a backtest of setup rules."""
 
 from futurecast.cli import main
 

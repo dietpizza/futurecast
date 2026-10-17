@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Tuple
 
 
 def detect_exchange(symbol: str) -> str:
@@ -153,57 +153,29 @@ def extract_base_and_quote(symbol: str) -> Tuple[str, str]:
     return s, "USDT"
 
 
-def format_benchmark_symbol(base: str, quote: str, exchange: str) -> str:
-    """Format a benchmark asset into an exchange-compliant symbol."""
-    ex = exchange.lower().strip()
-    if ex == "coindcx":
-        if quote == "INR":
-            return f"I-{base}_INR"
-        return f"B-{base}_{quote}"
-    else:
-        return f"{base}{quote}"
-
-
 def get_symbol_sector(symbol: str) -> str:
     """Return the market sector category for a symbol (e.g. MEME, L1, DEFI, AI, etc.)."""
     base, _ = extract_base_and_quote(symbol)
     return SECTOR_MAP.get(base, "GENERAL_ALT")
 
 
-def resolve_benchmarks(
-    target_symbol: str,
-    exchange: Optional[str] = None,
-    sector_aware: bool = True,
-) -> List[str]:
-    """Determine the appropriate benchmark assets for the given target token.
-    
-    When sector_aware=True, dynamically routes category leaders:
-    - Meme coins (e.g. SHIB, PEPE, WIF) -> [DOGE, BTC]
-    - Alt-L1s (e.g. AVAX, SUI, APT) -> [SOL, BTC]
-    - DeFi tokens (e.g. UNI, AAVE, CRV) -> [ETH, BTC]
-    - NFT/Gaming tokens (e.g. SAND, AXS) -> [BLUR, BTC]
-    - AI tokens (e.g. RENDER, FET, TAO) -> [NEAR, BTC]
-    - Category leaders themselves (e.g. DOGE, SOL, BLUR) -> [BTC, ETH]
+def resolve_benchmark(target_symbol: str) -> str:
+    """The CoinDCX pair a coin's moves are measured against, by sector:
+    - Meme coins (e.g. SHIB, PEPE, WIF) -> DOGE
+    - Alt-L1s (e.g. AVAX, SUI, APT) -> SOL
+    - DeFi tokens (e.g. UNI, AAVE, CRV) -> ETH
+    - NFT/Gaming tokens (e.g. SAND, AXS) -> BLUR
+    - AI tokens (e.g. RENDER, FET, TAO) -> NEAR
+    - Infrastructure tokens (e.g. PYTH, FIL) -> LINK
+    - Category leaders, majors and unlisted coins -> BTC
 
-    A coin is never its own benchmark: BTC -> [ETH, SOL] and ETH -> [BTC, SOL]. Benchmarking
-    a coin against itself would duplicate its columns and break feature generation.
+    A coin is never its own benchmark: BTC -> ETH. Its candle columns would collide with the
+    benchmark's.
     """
-    ex = exchange or detect_exchange(target_symbol)
     base, quote = extract_base_and_quote(target_symbol)
-
-    preferred = ["BTC", "ETH"]
-    sector = SECTOR_MAP.get(base) if sector_aware else None
-    if sector:
-        leader_base = SECTOR_LEADERS.get(sector, "BTC")
-        # Leaders and majors are benchmarked against BTC / ETH; everyone else against their leader
-        if base != leader_base and base not in ("BTC", "ETH", "SOL", "DOGE", "BLUR"):
-            preferred = [leader_base, "BTC" if leader_base != "BTC" else "ETH"]
-
-    bases = [b for b in dict.fromkeys(preferred + ["BTC", "ETH", "SOL"]) if b != base][:2]
-    return [format_benchmark_symbol(b, quote, ex) for b in bases]
-
-
-def sanitize_symbol_for_filename(symbol: str) -> str:
-    """Convert symbol to safe filename string (e.g. 'B-DOGE_USDT' -> 'b_doge_usdt')."""
-    clean = symbol.lower().replace("-", "_").replace(":", "_")
-    return clean
+    leader = SECTOR_LEADERS.get(SECTOR_MAP.get(base, ""), "BTC")
+    if leader == base or base in ("ETH", "SOL", "DOGE", "BLUR"):
+        leader = "BTC"
+    if base == "BTC":
+        leader = "ETH"
+    return f"I-{leader}_INR" if quote == "INR" else f"B-{leader}_{quote}"

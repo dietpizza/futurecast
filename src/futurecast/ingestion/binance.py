@@ -192,12 +192,11 @@ class BinancePublicClient:
             return {}
 
     def fetch_orderbook_depth(self, symbol: str, limit: int = 20) -> Dict[str, Any]:
-        """Level-2 order book of the pair's Binance perpetual, best levels first, in the pair's units."""
-        book: Dict[str, Any] = {"symbol": symbol, "source": "empty", "timestamp_ms": int(time.time() * 1000),
-                                "bids": [], "asks": []}
+        """Level-2 order book of the pair's Binance perpetual, best levels first, in the pair's units
+        (empty sides when Binance has no market for the pair)."""
         market = self._require(symbol)
         if market is None:
-            return book
+            return {"bids": [], "asks": []}
         depth_limit = next((n for n in _DEPTH_LIMITS if n >= limit), _DEPTH_LIMITS[-1])
         data = self._get("/fapi/v1/depth", {"symbol": market.symbol, "limit": depth_limit})
         m = market.multiplier
@@ -207,13 +206,7 @@ class BinancePublicClient:
         }
         levels["bids"].sort(key=lambda x: x[0], reverse=True)
         levels["asks"].sort(key=lambda x: x[0])
-        book.update(
-            source=f"binance:{market.symbol}",
-            timestamp_ms=data.get("E") or book["timestamp_ms"],
-            bids=levels["bids"][:limit],
-            asks=levels["asks"][:limit],
-        )
-        return book
+        return {side: levels[side][:limit] for side in ("bids", "asks")}
 
     # ───────── funding rates ─────────
 

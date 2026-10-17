@@ -51,7 +51,7 @@ def test_one_setup_at_a_time_with_fixed_risk():
     assert s["max_drawdown_r"] == pytest.approx(2.2) and s["longest_losing_streak"] == 2
     assert trades["hold_hours"].iat[0] == pytest.approx(9 / 60)  # fill candle 2 through candle 10
 
-    assert [p["equity"] for p in result["equity"]][0] == 100.0 and len(result["equity"]) == 4
+    assert trades["equity_after"].to_numpy() == pytest.approx([102.96, 102.96 * 0.989, 102.96 * 0.989 ** 2])
     assert result["sides"]["long"]["trades"] == 3
     assert result["monthly"] == [{"month": "2026-01", "trades": 3, "win_rate": round(1 / 3, 4), "net_r": 0.76,
                                   "return_pct": round((1.0296 * 0.989 * 0.989 - 1) * 100, 2)}]
@@ -79,6 +79,24 @@ def test_each_trade_pays_the_costs_of_how_it_ended():
     assert s["break_even_win_rate"] == pytest.approx(1.1 / 4.06, abs=1e-4)
 
 
+def test_leverage_cap_shrinks_the_risk_of_tight_stops():
+    setups, outcomes, index = _history()
+    setups.loc[setups.index[5], "risk"] = 0.001  # the second taken trade has a 0.1% stop: 1% risk needs 10x
+    free = SetupSpec(ltf_minutes=1, htf_minutes=15, targets=(3.0,), maker_bps=0.0, taker_bps=0.0, slippage_bps=0.0)
+    result = run_backtest(setups, outcomes, index, free, BacktestConfig(target=3.0, max_leverage=5.0))
+    trades, s = result["trades"], result["summary"]
+    assert list(trades["leverage"]) == [1.0, 5.0, 1.0]
+    assert list(trades["account_risk_pct"]) == pytest.approx([1.0, 0.5, 1.0])
+    assert list(trades["net_r"]) == [3.0, -1.0, -1.0]  # results in R are unchanged ...
+    assert s["capped_trades"] == 1  # ... but the capped loss costs the account half as much
+    assert s["total_return_pct"] == pytest.approx((1.03 * 0.995 * 0.99 - 1) * 100, abs=0.01)
+    assert "1 of 3 trades risked less than 1%: their stop was too tight for 5x" in format_report("B-TEST_USDT", result)
+
+    uncapped = run_backtest(setups, outcomes, index, free, BacktestConfig(target=3.0))["summary"]
+    assert uncapped["capped_trades"] == 0
+    assert uncapped["total_return_pct"] == pytest.approx((1.03 * 0.99 * 0.99 - 1) * 100, abs=0.01)
+
+
 def test_no_trades_is_reported_not_invented():
     setups, outcomes, index = _history()
     result = run_backtest(setups.iloc[:0], outcomes.iloc[:0], index, SPEC)
@@ -97,7 +115,8 @@ class _FakeClient:
         open_ = np.r_[close[0], close[:-1]]
         wick = np.abs(rng.normal(0, 0.001 * np.sqrt(minutes), bars))
         return pd.DataFrame({"timestamp": ts, "open": open_, "high": np.maximum(open_, close) * (1 + wick),
-                             "low": np.minimum(open_, close) * (1 - wick), "close": close}), "fake"
+                             "low": np.minimum(open_, close) * (1 - wick), "close": close,
+                             "volume": rng.lognormal(0, 0.5, bars)}), "fake"
 
     def close(self):
         pass
@@ -108,8 +127,8 @@ def test_backtest_command(monkeypatch, capsys, tmp_path):
 
     monkeypatch.setattr(multi_manager, "_binance_client", lambda assets: _FakeClient())
     csv = tmp_path / "trades.csv"
-    cli.backtest("b-test_usdt", entry="15m", context="1h", days=120, target=3.0, grade="all", risk=1.0,
-                 maker=1.0, taker=4.0, slippage=None, csv=str(csv))
+    cli.backtest("b-test_usdt", strategy="fvg", entry="15m", context="1h", days=120, target=3.0, grade="all", risk=1.0,
+                 max_leverage=None, breakeven=True, maker=1.0, taker=4.0, slippage=None, csv=str(csv))
     out = capsys.readouterr().out
     assert out.startswith("B-TEST_USDT · 15m entries in 1h context · A+/B setups · 3R target")
     # Fees not given keep SetupSpec's defaults
@@ -117,3 +136,23 @@ def test_backtest_command(monkeypatch, capsys, tmp_path):
     assert "setups found" in out
     if "No filled trades." not in out:
         assert "Win rate" in out and pd.read_csv(csv)["outcome"].isin(["won", "lost", "timeout"]).all()
+
+
+def test_wedge_backtest_command(monkeypatch, capsys, tmp_path):
+    from futurecast.publisher import multi_manager
+
+    monkeypatch.setattr(multi_manager, "_binance_client", lambda assets: _FakeClient())
+    csv = tmp_path / "trades.csv"
+    cli.backtest("b-test_usdt", strategy="wedge", entry=None, context="1h", days=400, target=None, grade="all",
+                 risk=1.0, max_leverage=None, breakeven=True, maker=None, taker=None, slippage=None, csv=str(csv))
+    out = capsys.readouterr().out
+    # One chart (1h by default), a 2R target, leverage capped at 5x and the stop moved at 1.5R unless told otherwise
+    assert out.startswith("B-TEST_USDT · wedge breakouts on 1h · A+/B setups · 2R target · 1% risk per trade, "
+                          "at most 5x leverage\nmarket entries, stop to break-even at 1.5R")
+    assert " wedges, " in out and " broke out: " in out
+    if "No filled trades." not in out:
+        assert pd.read_csv(csv)["outcome"].isin(["won", "lost", "breakeven", "timeout"]).all()
+
+    with pytest.raises(Exception, match="needs --strategy wedge"):
+        cli.backtest("b-test_usdt", strategy="fvg", entry=None, context="1h", days=30, target="measured", grade="A+",
+                     risk=1.0, max_leverage=None, breakeven=True, maker=None, taker=None, slippage=None, csv="")

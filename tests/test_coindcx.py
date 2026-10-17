@@ -1,11 +1,7 @@
 """Tests for CoinDCX symbol handling: exchange detection and benchmark routing."""
 
 from futurecast.config import load_config
-from futurecast.ingestion.factory import (
-    detect_exchange,
-    resolve_benchmarks,
-    sanitize_symbol_for_filename,
-)
+from futurecast.ingestion.factory import detect_exchange, get_symbol_sector, resolve_benchmark
 from futurecast.publisher.multi_manager import SymbolWorker
 
 
@@ -15,76 +11,43 @@ def test_detect_exchange() -> None:
     assert detect_exchange("I-BTC_INR") == "coindcx"
     assert detect_exchange("DOGEUSDT") == "binance"
     assert detect_exchange("BTCUSDT") == "binance"
-    assert detect_exchange("SOLUSDT") == "binance"
 
 
-def test_resolve_benchmarks() -> None:
-    benchmarks_usdt = resolve_benchmarks("B-DOGE_USDT", "coindcx")
-    assert benchmarks_usdt == ["B-BTC_USDT", "B-ETH_USDT"]
-
-    benchmarks_inr = resolve_benchmarks("I-ETH_INR", "coindcx")
-    assert benchmarks_inr == ["I-BTC_INR", "I-SOL_INR"]
-
-    benchmarks_binance = resolve_benchmarks("DOGEUSDT", "binance")
-    assert benchmarks_binance == ["BTCUSDT", "ETHUSDT"]
-
-
-def test_dynamic_sector_benchmarks() -> None:
-    from futurecast.ingestion.factory import get_symbol_sector
-
+def test_sector_benchmarks() -> None:
     # Meme tokens benchmark against DOGE
-    assert get_symbol_sector("PEPEUSDT") == "MEME"
-    assert resolve_benchmarks("PEPEUSDT", "binance") == ["DOGEUSDT", "BTCUSDT"]
-    assert resolve_benchmarks("B-SHIB_USDT", "coindcx") == ["B-DOGE_USDT", "B-BTC_USDT"]
+    assert get_symbol_sector("B-PEPE_USDT") == "MEME"
+    assert resolve_benchmark("B-PEPE_USDT") == "B-DOGE_USDT"
+    assert resolve_benchmark("B-SHIB_USDT") == "B-DOGE_USDT"
 
     # Alt-L1 tokens benchmark against SOL
-    assert get_symbol_sector("AVAXUSDT") == "L1"
-    assert resolve_benchmarks("AVAXUSDT", "binance") == ["SOLUSDT", "BTCUSDT"]
-    assert resolve_benchmarks("B-SUI_USDT", "coindcx") == ["B-SOL_USDT", "B-BTC_USDT"]
+    assert get_symbol_sector("B-AVAX_USDT") == "L1"
+    assert resolve_benchmark("B-SUI_USDT") == "B-SOL_USDT"
 
-    # DeFi tokens benchmark against ETH
-    assert get_symbol_sector("UNIUSDT") == "DEFI"
-    assert resolve_benchmarks("UNIUSDT", "binance") == ["ETHUSDT", "BTCUSDT"]
-    assert resolve_benchmarks("B-AAVE_USDT", "coindcx") == ["B-ETH_USDT", "B-BTC_USDT"]
+    # DeFi tokens benchmark against ETH, NFT / Gaming against BLUR, AI against NEAR, infrastructure against LINK
+    assert resolve_benchmark("B-AAVE_USDT") == "B-ETH_USDT"
+    assert resolve_benchmark("B-SAND_USDT") == "B-BLUR_USDT"
+    assert resolve_benchmark("B-RENDER_USDT") == "B-NEAR_USDT"
+    assert resolve_benchmark("B-PYTH_USDT") == "B-LINK_USDT"
 
-    # NFT / Gaming tokens benchmark against BLUR
-    assert get_symbol_sector("SANDUSDT") == "NFT_GAMING"
-    assert resolve_benchmarks("SANDUSDT", "binance") == ["BLURUSDT", "BTCUSDT"]
+    # Sector leaders, majors and unlisted coins benchmark against BTC
+    for sym in ("B-DOGE_USDT", "B-SOL_USDT", "B-BLUR_USDT", "B-LINK_USDT", "B-ETH_USDT", "B-WAL_USDT"):
+        assert resolve_benchmark(sym) == "B-BTC_USDT"
 
-    # AI tokens benchmark against NEAR
-    assert get_symbol_sector("RENDERUSDT") == "AI"
-    assert resolve_benchmarks("RENDERUSDT", "binance") == ["NEARUSDT", "BTCUSDT"]
-
-    # Sector leaders benchmark against market majors (BTC, ETH)
-    assert resolve_benchmarks("SOLUSDT", "binance") == ["BTCUSDT", "ETHUSDT"]
-    assert resolve_benchmarks("B-BLUR_USDT", "coindcx") == ["B-BTC_USDT", "B-ETH_USDT"]
-
-    # Fallback when sector_aware is explicitly False
-    assert resolve_benchmarks("PEPEUSDT", "binance", sector_aware=False) == ["BTCUSDT", "ETHUSDT"]
+    # INR pairs get the INR pair
+    assert resolve_benchmark("I-ETH_INR") == "I-BTC_INR"
 
 
 def test_coin_is_never_its_own_benchmark() -> None:
-    # BTC benchmarked against itself duplicated its candle columns and training failed
-    assert resolve_benchmarks("B-BTC_USDT", "coindcx") == ["B-ETH_USDT", "B-SOL_USDT"]
-    assert resolve_benchmarks("B-ETH_USDT", "coindcx") == ["B-BTC_USDT", "B-SOL_USDT"]
-    assert resolve_benchmarks("BTCUSDT", "binance", sector_aware=False) == ["ETHUSDT", "SOLUSDT"]
-    for sym in ("B-BTC_USDT", "B-ETH_USDT", "B-SOL_USDT", "B-DOGE_USDT", "B-BLUR_USDT", "I-BTC_INR", "B-PEPE_USDT"):
-        benchmarks = resolve_benchmarks(sym, "coindcx")
-        assert sym not in benchmarks and len(set(benchmarks)) == 2
+    # BTC benchmarked against itself duplicated its candle columns
+    assert resolve_benchmark("B-BTC_USDT") == "B-ETH_USDT"
+    assert resolve_benchmark("I-BTC_INR") == "I-ETH_INR"
+    for sym in ("B-BTC_USDT", "B-ETH_USDT", "B-SOL_USDT", "B-DOGE_USDT", "B-BLUR_USDT", "B-NEAR_USDT", "B-LINK_USDT"):
+        assert resolve_benchmark(sym) != sym
 
 
-def test_btc_features_build(tmp_path) -> None:
-    worker = SymbolWorker("B-BTC_USDT", "coindcx", resolve_benchmarks("B-BTC_USDT", "coindcx"),
-                          "MAJOR", load_config(), tmp_path / "models")
+def test_btc_statistics_build_against_eth() -> None:
+    worker = SymbolWorker("B-BTC_USDT", resolve_benchmark("B-BTC_USDT"), "MAJOR", load_config())
     worker.load_synthetic()
 
-    feats = worker.pipes["1m"].generate_features(worker.candles["1m"])
-    assert feats.columns.is_unique
-    assert worker.latest_event is not None  # the live engine produced a forecast, so the order book shows
-
-
-def test_sanitize_symbol() -> None:
-    assert sanitize_symbol_for_filename("B-DOGE_USDT") == "b_doge_usdt"
-    assert sanitize_symbol_for_filename("I-BTC_INR") == "i_btc_inr"
-    assert sanitize_symbol_for_filename("DOGEUSDT") == "dogeusdt"
-
+    assert all(df.columns.is_unique for df in worker.candles.values())
+    assert worker.momentum["horizons"]["1d"]["versus"]["symbol"] == "B-ETH_USDT"

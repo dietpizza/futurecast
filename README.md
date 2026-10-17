@@ -1,22 +1,23 @@
 # futurecast ⚡
 
-A local **web dashboard for CoinDCX futures**, built around a fair-value-gap strategy: a higher chart
-for context, a lower chart for entries (1-hour and 15-minute by default). For every coin you add it shows:
+A local, read-only **web dashboard for CoinDCX futures** that runs plain statistics on each coin's
+price momentum. No models are trained. For every coin you add, at four horizons (1h · 4h · 1d · 3d), it shows:
 
-- **market structure** on both charts (swing points, breaks of structure, changes of character) and
-  the open **fair value gaps** nearest to price, found by exact rules,
-- the latest long and short **setup** with its limit entry, stop and 2R / 3R / 4R take-profit, an A+ checklist,
-  and what happened to its orders,
-- a **backtest** of the rules on two years of the coin's history: win rate, average R, profit factor,
-  drawdown and an equity curve, risking 1% per trade,
-- each setup's **win chance** from LightGBM / XGBoost / CatBoost trained on the coin's own past setups,
-  next to the break-even after fees, and whether models or rules made money on history they never saw,
-- the **worst move** to expect against each side per horizon (5m · 15m · 1h · 4h · 8h), a risk score and a
-  maximum leverage.
+- the **last move** in volatility units (z) and its percentile among every past move of that length,
+- **what followed similar moves** on this coin: the next window's average return, how often it rose,
+  and a 95% range for that average that allows for the overlap between windows,
+- whether the coin's price **trends or mean-reverts** at that horizon (variance-ratio test) and the
+  correlation between each move and the next,
+- a **Long / Short signal** only when the average after similar moves beats a market round trip in
+  fees, its 95% range excludes zero, and it holds in both halves of the history,
+- **supporting signals**: taker flow, moves against the sector benchmark after taking out beta, RSI, the 1h
+  EMA 20/50/200 stack, position in the 24h / 7d / 30d range, realized volatility, volume against a
+  typical day, funding rate percentile, and the order book.
 
-A secondary 15-minute cross-asset "residual alpha" forecast still trains and is logged, but is not shown.
+The `futurecast backtest` command also replays two rule-based setups (fair-value-gap setups and wedge
+breakouts) on history. They are not on the dashboard.
 
-> **Zero-Execution Security Guarantee**: This system is architecturally constrained to **forecasting, signal calibration, telemetry streaming, and drift auditing only**. It contains zero exchange trading credentials, zero order routing routines, and zero signing methods, preventing live trade execution or capital risk under any condition.
+> **Zero-Execution Security Guarantee**: This system is read-only. It contains zero exchange trading credentials, zero order routing routines, and zero signing methods, preventing live trade execution or capital risk under any condition. `AppConfig.enforce_zero_execution_policy()` refuses to start otherwise.
 
 ---
 
@@ -24,46 +25,52 @@ A secondary 15-minute cross-asset "residual alpha" forecast still trains and is 
 
 ```
 [ Binance USD-M Futures Public REST (Read-Only) ]
-  (closed 1m / 15m / 1h candles and settled funding of the coin and two benchmarks,
-   live price, order book; candles cached on disk)
+  (closed 15m / 1h candles of the coin and its benchmark, the coin's settled
+   funding, live price, order book; candles cached on disk)
                │
                ▼
-   [ Alignment & Feature Engineering ]   38 features: returns, betas, volatility,
-               │                         volume, taker flow, funding, price geometry
-               ▼
-   [ Rules ]   swing points, BOS / CHoCH, fair value gaps on 1h and 15m → setups
+   [ Alignment ]   coin and benchmark on one candle grid per chart
                │
                ▼
-   [ Labels ]  setup filled? take-profit before stop (2R, 3R, 4R); worst move;
-               │  15-minute residual alpha
-               ▼
-   [ Time-ordered fit → calibrate → test, no outcome crossing a slice boundary ]
-   [ Volatility regimes: hidden Markov model (risk) ]
+   [ stats.momentum ]  z, event study, variance ratio, IC, signal   (per horizon)
+   [ stats.signals ]   RSI, EMA stack, ranges, volatility, volume, funding
                │
                ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │      READ-ONLY WEB DASHBOARD (FastAPI + WebSocket, port 8000)          │
 │                                                                        │
 │  • Strictly NO Private Keys / NO Trading APIs                          │
-│  • Output: structure, gaps, setups with entry / stop / target, win    │
-│    chance, worst move, max leverage, and the evidence behind each      │
-│  • Audit: JSONL forecast log in ~/.futurecast/logs/forecasts/ (≤ 32 MB) │
+│  • Recomputed whenever a 15m or 1h candle closes                       │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Features
+## Momentum statistics
 
-Window lengths count candles of the interval being modelled (1m, 15m or 1h). "btc" and "doge" in
-feature names mean the primary benchmark and the target coin.
+Each horizon is a number of candles on one chart: 1h and 4h use 15-minute candles (180 days of
+history), 1d and 3d use hourly candles (2 years). Everything is computed on closed candles, in
+`src/futurecast/stats/momentum.py` and `stats/signals.py`.
 
-| Group | Count | Features |
-|---|---|---|
-| **Cross-asset** | 19 | Log returns over 1 / 5 / 15 / 60 candles for the coin and both benchmarks, rolling betas (60 and 1440 candles), beta-residual momentum, return spreads to both benchmarks, RSI spread. |
-| **Volume & volatility** | 11 | Volume z-scores (60, 1440), relative volume ratio, Parkinson high-low volatility (15, 60, 240) and the benchmark's (60), volatility ratio, taker order-flow imbalance (5, 15, z-score over 60). |
-| **Funding** | 3 | Settled funding rate, its deviation from the 3-day mean, spread to the benchmark's funding. |
-| **Price geometry** | 5 | Distance to the 60-candle range, 240-candle VWAP basis, upper / lower wick and body ratios. |
+- **Move:** z = the log return over the last h candles ÷ (σ √h), where σ is the standard deviation
+  of one-candle returns over the trailing 14 days. z is roughly standard normal under a random walk.
+- **After similar moves:** every past z goes into a fifth (quintile). For the fifth the latest move falls
+  in: the mean, median and share-up of the following h-candle return, and the same over every window
+  (the coin's drift). Windows start every candle, so they overlap; the 95% range of the mean uses
+  Hansen–Hodrick standard errors (autocovariances up to h − 1 lags), which are exact for that overlap.
+  The mean is also split into the older and newer half of the history.
+- **Persistence:** the Lo–MacKinlay variance ratio VR(h) with its heteroskedasticity-robust z
+  (above 1 trending, below 1 mean-reverting, p < 0.05 to count), and the correlation of z with the next
+  window's volatility-scaled return (IC) with an overlap-corrected t.
+- **Signal:** Long or Short when the latest move is outside the middle fifth and, after moves in its
+  fifth, the next window averaged more than a market round trip (2 × the 0.0885% CoinDCX taker fee
+  with GST), the 95% range excludes zero, both halves agree in sign, and at least 30 non-overlapping
+  windows stand behind it. A **continuation** follows the move; a **reversal** fades it.
+
+The signal comes from an event study over the history on hand (the latest windows included), not
+from a backtest of trading it. On 17 October 2026 every horizon of BTC, ETH, SOL, BAT, INJ and DASH
+read "no edge": after moves like the latest ones, the averages were a few hundredths of a percent,
+inside their 95% ranges and mostly under the fees.
 
 ---
 
@@ -81,8 +88,8 @@ The rules run on a pair of charts: 15-minute entries in 1-hour context by defaul
    entry candles.
 
 Every entry-chart CHoCH that leaves a gap is a setup; those passing both context checks are grade
-**A+**, the rest grade B. Only A+ setups raise a signal. Swings, breaks and gaps use only candles that
-have closed.
+**A+**, the rest grade B. Backtests take A+ setups unless told otherwise (`--grade all`). Swings,
+breaks and gaps use only candles that have closed.
 
 ## Backtest
 
@@ -97,7 +104,6 @@ fees. Fees follow how the orders are placed: the limit entry and the take-profit
 stop pays the taker fee plus slippage, a timeout exit the taker fee. The defaults are CoinDCX USDT-M
 futures (0.025% maker, 0.075% taker, plus 18% GST) and 2 bps of stop slippage, so a win costs 0.059%
 round trip and a stop 0.138%; change them with `--maker`, `--taker` and `--slippage` (basis points).
-Each trained coin's card shows the same backtest on its training history.
 
 Results to October 2026, A+ setups, 3R target, average result per trade after a flat 0.10% round-trip
 cost (the model before per-leg fees):
@@ -122,42 +128,39 @@ Higher charts help mostly because fees shrink relative to the stop (0.4–0.7R p
 about 0.2R on 15m). Before fees, A+ setups average close to 0R almost everywhere: as coded, the strategy
 has no clear edge, and none of these results is large enough to trust over 170–200 trades.
 
-## What the models predict
+### Wedge breakouts (second strategy, backtest only)
 
-- **Win chance:** whether a filled setup reaches its take-profit before its stop (2R, 3R and 4R each get
-  their own models), from the setup's geometry, its 15m context, the time of day and the 38 market
-  features. Touching both in one candle counts as a loss.
-- **Worst move:** quantile regressors estimate the 95th percentile of how far price moves against each
-  side within the horizon, which sets the risk score and maximum leverage.
-- **Residual alpha (secondary):** the coin's 15-minute return minus beta times its benchmark's return.
-
----
-
-## Validation (Zero-Leakage Protocol)
-
-Every model uses the coin's history strictly in time order, and no trade still running in one slice
-resolves in the next:
-
-```
-| fit | early-stop |  calibrate  |    test    |
-oldest ------------------------------------> newest
+```bash
+uv run futurecast backtest B-ETH_USDT --strategy wedge                 # 1h, 2 years, A+, 2R, 1% risk, at most 5x
+uv run futurecast backtest B-SOL_USDT --strategy wedge --entry 4h --days 2190 --target measured --grade all
 ```
 
-* **Calibration:** the three models' average is mapped onto observed win frequencies with Platt scaling.
-* **Baseline:** the rules alone: how often filled setups of the same grade (A+ or B) won before the test slice.
-* **Edge test:** the models have an edge only when, on the untouched test slice, they beat that baseline
-  (lower bound of a block-bootstrap interval of their Brier skill above zero) and rank winners better than
-  the grade does. Otherwise the rules' win rate is shown.
-* **Trading check:** the test stretch is replayed one setup at a time after fees: every A+ setup (the
-  rules), and the A+ setups whose win chance cleared break-even (the models). A signal is raised only when
-  the replay behind the chance shown made money on at least 10 trades.
-* **Worst move:** its 95% bound is calibrated separately in each volatility regime, so it also holds in
-  stormy stretches, and it is shown only if it beats a volatility-only baseline.
+A second rule set on a single chart, not shown on the dashboard. A wedge is two converging lines, one
+through the latest two swing highs and one through the latest two swing lows, with no close outside
+them since the first pivot and an apex 10–30 candles ahead. A close beyond a line is a breakout (A+ when
+its volume is 1.5× the 20-candle average and its body is bigger than ATR(14)). Price must then come back
+to within 0.2% of the broken line within 5 candles without closing 0.2% back inside it, and that candle
+or the next must close the trade's way in the top (bottom) half of its range. The entry is a market
+order at that close, the stop 0.5 ATR beyond the retest, the target 2R, 2.5R or the wedge's height
+(`--target measured`), and the stop moves to break-even plus fees at 1.5R (`--no-breakeven` keeps it).
+Positions are capped at 5× the account (`--max-leverage`), so a trade with a stop too tight for that
+risks less than 1%. Rising wedges, falling wedges and triangles are reported separately.
 
-See `src/futurecast/features/setups.py`, `src/futurecast/models/setup_model.py`, `src/futurecast/backtest.py`
-and `trade_risk.py` for the full procedure.
+Results to October 2026, all grades (A+ alone leaves 1–45 trades a coin), 2R target, average result per
+trade after fees, trades in brackets:
 
----
+| Chart | History | BTC | ETH | SOL | BAT |
+|---|---|---|---|---|---|
+| 15m | 2 years | −0.50R (223) | −0.28R (233) | −0.37R (181) | −0.17R (167) |
+| 1h | 2 years | −0.24R (55) | −0.23R (42) | −0.38R (23) | −0.04R (40) |
+| 4h | 2 years | −0.17R (11) | +0.05R (8) | +0.36R (12) | +0.29R (9) |
+
+The 4h results looked good over two years, but there were too few trades to judge. Over 6 years and ten coins (BTC, ETH,
+SOL, BAT, BNB, XRP, DOGE, ADA, LINK, AVAX) they come to −0.02R a trade over 212 trades (90% bootstrap
+interval −0.18R to +0.14R), with good and bad years alternating. Before fees, wedge trades average about
+0R on every chart, the same as the fair-value-gap setups, and the market entry makes fees heavier (0.25–0.55R a
+trade on 15m). Moving the stop to break-even does not help consistently. As coded, this strategy has no
+edge either.
 
 ## Running the Dashboard
 
@@ -167,7 +170,7 @@ and `trade_risk.py` for the full procedure.
 
 That starts the dashboard on port 8000 on every network interface: open **http://127.0.0.1:8000**
 on the same machine, or the machine's IP from elsewhere. The dashboard has no login, so anyone who
-can reach the port can add coins and start training; firewall the port or pass `--host 127.0.0.1`
+can reach the port can add and remove coins; firewall the port or pass `--host 127.0.0.1`
 to keep it local. `./run.sh` is a thin wrapper around the `futurecast` command, so these are
 equivalent:
 
@@ -175,14 +178,14 @@ equivalent:
 uv run futurecast                    # same as ./run.sh
 uv run futurecast --port 8002        # or: PORT=8002 ./run.sh
 uv run futurecast --host 127.0.0.1   # this machine only
-uv run futurecast --offline          # simulated candles, no network (no training)
+uv run futurecast --offline          # simulated random-walk candles, no network
 ```
 
 `futurecast web` is still accepted and does the same thing.
 
-In the dashboard, add any CoinDCX futures pair (e.g. `B-DOGE_USDT`, `B-SOL_USDT`). New coins are
-trained automatically from their real candle history (the card shows the download, then training
-progress) and can be retrained from the dashboard. All market data comes from the Binance perpetual
+In the dashboard, add any CoinDCX futures pair (e.g. `B-DOGE_USDT`, `B-SOL_USDT`). A new coin's
+history downloads in the background, one coin at a time (the card shows the progress); from then on
+each candle is appended as it closes. All market data comes from the Binance perpetual
 behind the pair (`B-SOL_USDT` → `SOLUSDT`, `B-1000PEPE_USDT` → `1000PEPEUSDT`, INR pairs → their
 `USDT` perpetual, priced in USDT). The add-coin search lists every Binance crypto and commodity
 perpetual under its CoinDCX name; CoinDCX itself is never called.
@@ -192,25 +195,28 @@ Everything the app keeps lives in `~/.futurecast` (set `FUTURECAST_HOME` to use 
 | Path | Contents |
 |---|---|
 | `tracked_symbols.json` | Coins on the dashboard |
-| `models/` | Trained models |
-| `cache/candles/` | Downloaded closed candles, so retrains and restarts only fetch new ones |
-| `logs/forecasts/` | Residual-alpha forecasts as JSONL, at most 32 MB in total (oldest deleted first) |
-| `config/*.yaml` | Optional overrides; any file left out uses the defaults shown in this repo's `config/` |
+| `cache/candles/` | Downloaded closed candles, so restarts and backtests only fetch new ones |
+| `config/*.yaml` | Optional overrides (`assets.yaml`, `safety.yaml`); any file left out uses the defaults shown in this repo's `config/` |
+
+Older versions also kept `models/` and `logs/forecasts/` there; nothing reads them any more, so they
+can be deleted.
 
 ---
 
 ### Sector Benchmarks
 
-Each coin is aligned with two benchmarks, chosen by sector. A coin is never its own benchmark.
+Each coin's moves are compared with its sector's leader, after taking out beta. A coin is never its
+own benchmark.
 
-| Sector | Benchmarks | Example coins |
+| Sector | Benchmark | Example coins |
 |---|---|---|
-| **Meme** | `DOGE`, `BTC` | `PEPE`, `SHIB`, `FLOKI`, `BONK`, `WIF` |
-| **L1** | `SOL`, `BTC` | `AVAX`, `SUI`, `APT`, `ADA`, `NEAR` |
-| **DeFi** | `ETH`, `BTC` | `UNI`, `AAVE`, `CRV`, `LDO`, `PENDLE` |
-| **NFT / Gaming** | `BLUR`, `BTC` | `SAND`, `MANA`, `AXS`, `GALA`, `APE` |
-| **AI** | `NEAR`, `BTC` | `RENDER`, `FET`, `TAO`, `AR` |
-| **Leaders and others** | `BTC`, `ETH` | `DOGE`, `SOL`, `BLUR` and unlisted coins; `BTC` uses `ETH`, `SOL` and `ETH` uses `BTC`, `SOL` |
+| **Meme** | `DOGE` | `PEPE`, `SHIB`, `FLOKI`, `BONK`, `WIF` |
+| **L1** | `SOL` | `AVAX`, `SUI`, `APT`, `ADA`, `NEAR` |
+| **DeFi** | `ETH` | `UNI`, `AAVE`, `CRV`, `LDO`, `PENDLE` |
+| **NFT / Gaming** | `BLUR` | `SAND`, `MANA`, `AXS`, `GALA`, `APE` |
+| **AI** | `NEAR` | `RENDER`, `FET`, `TAO`, `AR` |
+| **Infrastructure** | `LINK` | `PYTH`, `FIL` |
+| **Leaders and others** | `BTC` | `DOGE`, `SOL`, `ETH`, `BLUR`, `LINK` and unlisted coins; `BTC` uses `ETH` |
 
 ---
 

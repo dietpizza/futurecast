@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light dark">
-  <title>FutureCast · Setup Watchlist</title>
+  <title>FutureCast · Momentum Watchlist</title>
   <!-- Bump ?v= when the icon changes: browsers cache favicons apart from the page -->
   <link rel="icon" href="/static/favicon.svg?v=2" type="image/svg+xml">
 
@@ -62,15 +62,14 @@
         <h1>Watchlist</h1>
         <p class="toolbar-summary" id="watchlist-summary">Loading…</p>
       </div>
-      <nav class="segmented" id="timeframe-selector" aria-label="Forecast horizon">
+      <nav class="segmented" aria-label="Momentum horizon">
         <span class="segmented-label"
-              data-tooltip-title="Forecast horizon"
-              data-tooltip="Window for the risk column: how far price may move against a position within it. 5m, 15m and 1h use 1-minute candles; 4h and 8h use 15-minute candles. Each horizon has its own trained risk models.">Horizon</span>
-        <button class="tf-btn" data-tf="5m" onclick="setTimeframe('5m')">5m</button>
-        <button class="tf-btn active" data-tf="15m" onclick="setTimeframe('15m')">15m</button>
+              data-tooltip-title="Momentum horizon"
+              data-tooltip="The window the watchlist's columns and signal are measured over: the last move of this length, and what followed similar moves. 1h and 4h use 15-minute candles (180 days of history), 1d and 3d hourly candles (2 years).">Horizon</span>
         <button class="tf-btn" data-tf="1h" onclick="setTimeframe('1h')">1h</button>
-        <button class="tf-btn" data-tf="4h" onclick="setTimeframe('4h')">4h</button>
-        <button class="tf-btn" data-tf="8h" onclick="setTimeframe('8h')">8h</button>
+        <button class="tf-btn active" data-tf="4h" onclick="setTimeframe('4h')">4h</button>
+        <button class="tf-btn" data-tf="1d" onclick="setTimeframe('1d')">1d</button>
+        <button class="tf-btn" data-tf="3d" onclick="setTimeframe('3d')">3d</button>
       </nav>
     </div>
 
@@ -78,39 +77,19 @@
       <div class="list-head" aria-hidden="true">
         <span class="c-pair">Pair</span>
         <span class="c-price num">Price</span>
-        <span class="c-signal"><span class="th-help" data-tooltip-title="Trade signal" data-tooltip="Long or Short only for an A+ setup whose limit order is still waiting, whose win chance clears break-even after fees, and when setups like it made money after fees on history the models never saw. 'A+ setup' marks one without that proof.">Signal</span></span>
-        <span class="c-long num"><span class="th-help" data-tooltip-title="Long setup" data-tooltip="The latest long setup: a change of character up on the entry chart that left a fair value gap, with a limit order at the gap's midpoint. While the order waits: its win chance at the picked target and the break-even after fees. Afterwards: what happened.">Long setup</span></span>
-        <span class="c-short num"><span class="th-help" data-tooltip-title="Short setup" data-tooltip="The latest short setup: a change of character down on the entry chart that left a fair value gap, with a limit order at the gap's midpoint. While the order waits: its win chance at the picked target and the break-even after fees. Afterwards: what happened.">Short setup</span></span>
-        <span class="c-trend"><span class="th-help" data-tooltip-title="Market structure" data-tooltip="Trend on the context chart (higher) and the entry chart (lower): up after a close above the last swing high, down after a close below the last swing low.">Trend</span></span>
+        <span class="c-signal"><span class="th-help" data-tooltip-title="Momentum signal" data-tooltip="Long or Short only when, after past moves like the latest one (same fifth of all moves of this length), the next window averaged more than a market round trip's fees in one direction, the 95% range of that average excludes zero, and it held in both halves of the history. Statistics, not a model: no edge is the usual answer.">Signal</span></span>
+        <span class="c-move num"><span class="th-help" data-horizon-label="Move · {h}" data-tooltip-title="Last move" data-tooltip="Return over the last window, z (the move in units of a typical move of that length, from the last 14 days' volatility) and its percentile among every past move of that length.">Move · 4h</span></span>
+        <span class="c-next num"><span class="th-help" data-horizon-label="Next {h}" data-tooltip-title="After similar moves" data-tooltip="Mean return over the next window after past moves in the same fifth as the latest one, and how often it rose. Colored only when the 95% range of the mean excludes zero.">Next 4h</span></span>
+        <span class="c-char"><span class="th-help" data-tooltip-title="Character" data-tooltip="Variance-ratio test at this horizon: Trending when moves keep their direction more than a random walk would (ratio above 1, p below 0.05), Reverting when they turn back (below 1), else Random.">Character</span></span>
+        <span class="c-flow"><span class="th-help" data-horizon-label="Taker flow · {h}" data-tooltip-title="Taker flow" data-tooltip="Share of the traded value bought with market orders over the last window, and its percentile among past windows. Aggressive buyers above 50%.">Taker flow · 4h</span></span>
         <span class="c-book"><span class="th-help" data-tooltip-title="Order book" data-tooltip="Share of resting limit-order liquidity on the bid (buy) side across the top 20 levels.">Order book</span></span>
-        <span class="c-risk"><span class="th-help" data-horizon-label="Risk L / S" data-tooltip-title="Long / short risk" data-tooltip="Trained models estimate the worst 5% of moves against a long (L) or short (S) within the horizon. The score (0–100) ranks that worst case against this coin's recent history; 'Max' is the highest leverage that keeps liquidation beyond it. Not a probability.">Risk L / S · 15m</span></span>
         <span class="c-actions"></span>
       </div>
       <div class="coins-container" id="coins-container"></div>
     </section>
   </main>
 
-  <!-- CoinDCX contract link blueprint -->
-  <template id="coindcx-trade-link-template">
-    <a href="https://coindcx.com/trade/" target="_blank" rel="noopener noreferrer" class="symbol-link">CoinDCX Futures Contract</a>
-  </template>
-
-  <!-- Model breakdown table prototype -->
-  <template id="models-table-prototype">
-    <table class="models-table">
-      <thead>
-        <tr>
-          <th>Model</th>
-          <th>Signal</th>
-          <th>Residual Alpha (basis points)</th>
-          <th>Strength</th>
-          <th>Confidence</th>
-        </tr>
-      </thead>
-    </table>
-  </template>
-
-  <footer class="plain-english-glossary" id="glossary-footer">
+  <footer class="plain-english-glossary">
     <details class="glossary-details">
       <summary class="glossary-summary">
         <span class="glossary-title">The "Not a Finance-Bro" Cheat Sheet</span>
@@ -119,67 +98,67 @@
 
       <div class="glossary-grid">
         <div class="glossary-card">
-          <h3>Structure &amp; setups</h3>
+          <h3>Momentum</h3>
           <dl class="glossary-list">
             <div class="glossary-item">
-              <dt><span class="term-badge">BOS</span> Break of structure</dt>
-              <dd>A candle <strong>closes</strong> beyond the latest swing high (or low) in the direction of the trend: the trend continues. A swing high is a candle whose high tops its neighbours on both sides, so it is only known a few candles later.</dd>
+              <dt><span class="term-badge">Move</span> Last move and z</dt>
+              <dd>The return over the last window (1h, 4h, 1d or 3d), divided by the size of a typical move that long: <strong>z</strong>. A typical move comes from the last 14 days' volatility, so z 2 means twice the usual move, however wild the coin is. The percentile ranks it against every past move of that length.</dd>
             </div>
             <div class="glossary-item">
-              <dt><span class="term-badge">CHoCH</span> Change of character</dt>
-              <dd>A close beyond the latest swing point <strong>against</strong> the trend, e.g. below the last higher low in an uptrend: the trend flips.</dd>
+              <dt><span class="term-badge">Next</span> After similar moves</dt>
+              <dd>All past moves are split into fifths, from the hardest falls to the hardest rises. For the fifth the latest move belongs to: what the next window did on average, and how often it rose. Compared with every window, which shows the coin's plain drift.</dd>
             </div>
             <div class="glossary-item">
-              <dt><span class="term-badge">FVG</span> Fair value gap</dt>
-              <dd>Three candles where the first candle's wick and the third candle's wick do not overlap: price skipped that range in one push. It stays open until a candle closes through its far side, and price often comes back into it.</dd>
+              <dt><span class="term-badge">95%</span> Range of the mean</dt>
+              <dd>Where the true average plausibly lies. Windows overlap (a 4h window starting every 15 minutes), so the range is widened for that (Newey–West). If it straddles zero, the average is indistinguishable from luck.</dd>
             </div>
             <div class="glossary-item">
-              <dt><span class="term-badge">A+</span> Setup</dt>
-              <dd>The higher (context) chart's trend points the trade's way, the lower (entry) chart's pullback reached into a context-chart gap, then an entry-chart CHoCH left a gap behind. Each card names its two charts. Orders: a limit at that gap's midpoint, a stop just past the pullback's extreme, a take-profit at 3 or 4 times the risk (R). Setups missing a context-chart check are grade B and never raise a signal.</dd>
+              <dt><span class="term-badge">Signal</span> Long / Short</dt>
+              <dd>Only when the latest move is outside the middle fifth, the average after similar moves beats a market round trip in fees (taker in and out, CoinDCX USDT-M futures with GST), its 95% range excludes zero, it shows in both the older and newer half of the history, and at least 30 non-overlapping windows stand behind it. A continuation follows the move; a reversal fades it.</dd>
             </div>
           </dl>
         </div>
 
         <div class="glossary-card">
-          <h3>Models &amp; verification</h3>
+          <h3>Does momentum persist?</h3>
           <dl class="glossary-list">
             <div class="glossary-item">
-              <dt><span class="term-badge">Win</span> Win chance</dt>
-              <dd>Chance a filled setup reaches its take-profit before its stop. LightGBM, XGBoost and CatBoost learn it from the coin's past setups; unless they beat the rules on setups they never saw, the rules' own win rate for the grade is shown instead.</dd>
+              <dt><span class="term-badge">VR</span> Variance ratio</dt>
+              <dd>The variance of moves of the horizon's length over what a random walk of one-candle moves would give (Lo–MacKinlay). <strong>Above 1</strong>: moves keep their direction (trending). <strong>Below 1</strong>: they reverse (mean-reverting). The p-value says how surprising the ratio would be if price were a random walk; under 0.05 counts.</dd>
             </div>
             <div class="glossary-item">
-              <dt><span class="term-badge">Needs</span> Break-even</dt>
-              <dd>The win rate at which a trade makes zero after fees. The limit entry and take-profit pay the maker fee; the stop is a market order that pays the taker fee and slips past its price, so a stopped trade costs more than a winner. Rates: CoinDCX USDT-M futures with 18% GST, shown in each card's Setups heading. Tight stops make fees a large share of the risk, so they need a higher win rate.</dd>
+              <dt><span class="term-badge">IC</span> Past → next correlation</dt>
+              <dd>Correlation between each move and the move of the same length that followed it, over the whole history. Positive means momentum, negative means reversal. Values of a few hundredths are normal for markets and can still matter.</dd>
             </div>
             <div class="glossary-item">
-              <dt><span class="term-badge">Test</span> Tested on unseen history</dt>
-              <dd>Models train on older setups, are calibrated on the next stretch, and are scored on the newest stretch they never saw. That stretch is also replayed: every A+ setup (the rules), and the A+ setups the models liked, one at a time, after fees.</dd>
-            </div>
-            <div class="glossary-item">
-              <dt><span class="term-badge">AUC</span> Ranking quality</dt>
-              <dd>How well the win chances rank winning setups above losing ones. <strong>0.5</strong> is a coin flip, <strong>1.0</strong> is perfect.</dd>
+              <dt><span class="term-badge">Halves</span> Older / newer</dt>
+              <dd>The same average computed on the older and the newer half of the history separately. An effect that shows up in only one half is more likely a fluke of that stretch.</dd>
             </div>
           </dl>
         </div>
 
         <div class="glossary-card">
-          <h3>Market activity</h3>
+          <h3>Signals</h3>
           <dl class="glossary-list">
+            <div class="glossary-item">
+              <dt><span class="term-badge">Flow</span> Taker flow</dt>
+              <dd>Share of traded value bought with market orders. Above 50%, buyers were the aggressive side; the percentile compares it with past windows.</dd>
+            </div>
+            <div class="glossary-item">
+              <dt><span class="term-badge">RSI</span> Relative strength index</dt>
+              <dd>Average gains against average losses over 14 candles, 0–100. Above 70 price has run up hard, below 30 down hard.</dd>
+            </div>
+            <div class="glossary-item">
+              <dt><span class="term-badge">EMA</span> Moving-average stack</dt>
+              <dd>Price against its 20, 50 and 200-hour exponential moving averages. An up stack (price above all three, faster above slower) is an established uptrend.</dd>
+            </div>
+            <div class="glossary-item">
+              <dt><span class="term-badge">Fund</span> Funding rate</dt>
+              <dd>What longs pay shorts (or the reverse when negative) at each settlement. A high percentile means crowded longs.</dd>
+            </div>
             <div class="glossary-item">
               <dt><span class="term-badge">Book</span> Order book imbalance</dt>
-              <dd>Buy versus sell limit orders waiting in the book. Heavy bids can cushion dips; heavy asks can cap rallies.</dd>
-            </div>
-            <div class="glossary-item">
-              <dt><span class="term-badge">Risk</span> Long / short risk</dt>
-              <dd>Trained models estimate how far price could move against each side in the worst 5% of cases, calibrated separately for calm, normal and stormy volatility so the 5% holds in rough stretches too. The 0–100 score ranks that against the coin's recent history; "Max" is the highest leverage that keeps liquidation beyond it.</dd>
-            </div>
-            <div class="glossary-item">
-              <dt><span class="term-badge">CVD</span> Cumulative volume delta</dt>
-              <dd>Aggressive buying versus price. Flat price with strong buying can precede a breakout.</dd>
-            </div>
-            <div class="glossary-item">
-              <dt><span class="term-badge">Clock</span> Volume clock</dt>
-              <dd>Trading burst intensity versus a quiet baseline. Low readings flag dormant, choppy markets.</dd>
+              <dd>Buy versus sell limit orders waiting in the book. Heavy bids can cushion dips; heavy asks can cap rallies. Display only.</dd>
             </div>
           </dl>
         </div>

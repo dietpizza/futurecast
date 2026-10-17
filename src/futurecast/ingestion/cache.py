@@ -30,7 +30,7 @@ class CandleCache:
     COLUMNS = ["time", "open", "high", "low", "close", "volume", "quote_volume",
                "count", "taker_buy_volume", "taker_buy_quote_volume"]
 
-    # One lock per file for the whole process: the stream loop and training each use their own client
+    # One lock per file for the whole process: the stream loop and history downloads each use their own client
     _locks: ClassVar[Dict[Path, threading.Lock]] = {}
     _locks_guard: ClassVar[threading.Lock] = threading.Lock()
 

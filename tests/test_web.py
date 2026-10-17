@@ -12,7 +12,6 @@ def test_app(tmp_path):
         initial_symbols=["B-DOGE_USDT", "B-SOL_USDT"],
         live_mode=False,
         persistence_path=tmp_path / "test_tracked_symbols.json",
-        models_dir=tmp_path / "models",
     )
     return app
 
@@ -22,21 +21,18 @@ def test_web_index_page(test_app):
         response = client.get("/")
         assert response.status_code == 200
         assert "FutureCast" in response.text
-        assert "models-table" in response.text
         # Verify tooltips and beginner-friendly descriptions
         assert "global-tooltip" in response.text
         assert "data-tooltip" in response.text
         assert "data-tooltip-title" in response.text
-        assert "basis points" in response.text
-        assert "Residual Alpha" in response.text
-        # Verify centered floating timeframe selector
-        assert "timeframe-selector" in response.text
-        assert "5m" in response.text
-        assert "15m" in response.text
-        assert "4h" in response.text
-        assert "8h" in response.text
-        # Verify CoinDCX link and glossary footer
-        assert "coindcx.com/trade/" in response.text
+        assert "Variance ratio" in response.text
+        # The horizon selector offers every horizon the server computes
+        for horizon in ("1h", "4h", "1d", "3d"):
+            assert f"data-tf=\"{horizon}\"" in response.text
+        # Nothing of the removed models is left on the page
+        for gone in ("Residual Alpha", "models-table", "LightGBM", "XGBoost", "Risk L / S", "Win chance"):
+            assert gone not in response.text
+        # Glossary footer
         assert "plain-english-glossary" in response.text
         assert "The \"Not a Finance-Bro\" Cheat Sheet" in response.text
 
@@ -68,62 +64,24 @@ def test_web_index_page(test_app):
 
 
 def test_api_coindcx_futures_catalog(test_app):
-    """Test CoinDCX futures catalog search endpoint."""
+    """The add-coin search gets every pair in one list and filters it in the page."""
     with TestClient(test_app) as client:
-        # Full catalog
         response = client.get("/api/coindcx/futures")
         assert response.status_code == 200
         catalog = response.json()
         assert len(catalog) >= 30
 
-        symbols = [item["symbol"] for item in catalog]
-        assert "B-DOGE_USDT" in symbols
-        assert "B-SOL_USDT" in symbols
-        assert "B-PEPE_USDT" in symbols
-        assert "B-BTC_USDT" in symbols
-        assert "B-ZK_USDT" in symbols
-
-        # Search query filter (e.g. pepe)
-        q_resp = client.get("/api/coindcx/futures?q=pepe")
-        assert q_resp.status_code == 200
-        pepe_results = q_resp.json()
-        assert any("PEPE" in item["symbol"] for item in pepe_results)
-
-        # Search query for B-ZK_USDT and zkSync
-        zk_resp = client.get("/api/coindcx/futures?q=zk")
-        assert zk_resp.status_code == 200
-        zk_results = zk_resp.json()
-        assert any(item["symbol"] == "B-ZK_USDT" for item in zk_results)
-        zk_item = next(item for item in zk_results if item["symbol"] == "B-ZK_USDT")
-        assert zk_item["name"] == "zkSync"
-        assert zk_item["coindcx_url"] == "https://coindcx.com/futures/B-ZK_USDT"
-
-        # Search query using direct CoinDCX URL paste
-        url_resp = client.get("/api/coindcx/futures?q=https://coindcx.com/futures/B-ZK_USDT")
-        assert url_resp.status_code == 200
-        assert any(item["symbol"] == "B-ZK_USDT" for item in url_resp.json())
-
-        # Sector filter
-        sec_resp = client.get("/api/coindcx/futures?sector=MEME")
-        assert sec_resp.status_code == 200
-        meme_results = sec_resp.json()
-        assert len(meme_results) >= 5
-        assert all(item["sector"] == "MEME" for item in meme_results)
+        by_symbol = {item["symbol"]: item for item in catalog}
+        assert {"B-DOGE_USDT", "B-SOL_USDT", "B-PEPE_USDT", "B-BTC_USDT", "B-ZK_USDT"} <= set(by_symbol)
+        zk = by_symbol["B-ZK_USDT"]
+        assert zk == {"symbol": "B-ZK_USDT", "base": "ZK", "name": "zkSync", "sector": zk["sector"],
+                      "description": zk["description"], "coindcx_url": "https://coindcx.com/futures/B-ZK_USDT"}
+        assert by_symbol["I-BTC_INR"]["coindcx_url"] == "https://coindcx.com/trade/I-BTC_INR"
+        assert sum(item["sector"] == "MEME" for item in catalog) >= 5
 
 
-def test_api_status_air_gapped_guarantee(test_app):
-    with TestClient(test_app) as client:
-        response = client.get("/api/status")
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "online"
-        assert data["execution_disabled"] is True
-        assert data["air_gapped"] is True
-        assert len(data["active_coins"]) >= 2
-
-
-def test_api_coins_and_multi_model_predictions(test_app):
-    from futurecast.publisher.multi_manager import SETUP_SPEC
+def test_api_coins_serve_momentum_statistics(test_app):
+    from futurecast.publisher.multi_manager import MOMENTUM_SPEC
 
     with TestClient(test_app) as client:
         response = client.get("/api/coins")
@@ -134,115 +92,42 @@ def test_api_coins_and_multi_model_predictions(test_app):
         doge_coin = next((c for c in coins if "DOGE" in c["symbol"]), None)
         assert doge_coin is not None
         assert doge_coin["sector"] == "MEME"
-        assert "benchmarks" in doge_coin
 
         assert any("SOL" in c["symbol"] for c in coins)
 
         for coin in coins:
-            # Offline mode renders synthetic candles and says so
-            assert coin["has_data"] is True
-            assert coin["data_source"] == "synthetic (offline mode)"
-            assert coin["trade_risk"] == {}  # risk comes only from trained models
-            assert "orderbook_depth" in coin
-            # Untrained coins never get invented models, metrics or probabilities
-            assert coin["is_custom_trained"] is False
-            assert coin["training_status"] == "untrained"
-            assert coin["model_predictions"] == {}
-            assert coin["cross_verification"]["models_count"] == 0
-            # Structure and setups come from rules, so they show before training; win chances do not
-            assert coin["setup_model"] is None
-            assert coin["structure"]["htf"]["trend"] in ("up", "down", "none")
-            assert coin["structure"]["ltf"]["interval"] == SETUP_SPEC.entry_interval
-            assert coin["setups"]["signal"] == "NEUTRAL"
-            for side in ("long", "short"):
-                if coin["setups"][side]:
-                    assert coin["setups"][side]["probability"] is None
-            assert "timeframe_forecasts" not in coin
+            # Offline mode computes on synthetic candles straight away
+            assert coin["has_data"] is True and coin["status"] == "ready"
+            assert set(coin) == {"symbol", "sector", "has_data", "status", "progress", "error", "history",
+                                 "current_price", "momentum", "signals", "orderbook_depth"}
+
+            m = coin["momentum"]
+            assert m["round_trip_pct"] == pytest.approx(MOMENTUM_SPEC.round_trip_pct)
+            assert set(m["horizons"]) == {h.name for h in MOMENTUM_SPEC.horizons}
+            for name, h in m["horizons"].items():
+                assert h["signal"] in ("LONG", "SHORT", "NEUTRAL")
+                assert h["reason"] in ("flat", "few", "noise", "fees", "unstable", "edge")
+                assert (h["signal"] != "NEUTRAL") == (h["reason"] == "edge")
+                assert isinstance(h["z"], float) and 0 <= h["percentile"] <= 100
+                a = h["after"]
+                assert a["ci_low_pct"] <= a["mean_pct"] <= a["ci_high_pct"]
+                assert 1 <= a["bucket"] <= a["buckets"] == MOMENTUM_SPEC.quantiles
+                assert h["persistence"]["character"] in ("trending", "mean_reverting", "random")
+                assert 0 < h["flow"]["buy_pct"] < 100
+                assert h["versus"]["symbol"] == "B-BTC_USDT"  # DOGE and SOL lead their sectors
+
+            s = coin["signals"]
+            assert 0 <= s["rsi"]["15m"] <= 100 and 0 <= s["rsi"]["1h"] <= 100
+            assert s["ema"]["stack"] in ("up", "down", "mixed")
+            assert all(0 <= r["position"] <= 1 for r in s["ranges"].values() if r)
+            assert s["volatility"]["daily_pct"] > 0
+            assert s["funding"] is None  # synthetic candles carry no funding
 
 
-def test_trained_coin_serves_setups_with_win_chances_and_risk(tmp_path):
-    from futurecast.backtest import BacktestConfig, dashboard_view, run_backtest
-    from futurecast.engine.setups import setup_dataset
-    from futurecast.features.pipeline import FeaturePipeline
-    from futurecast.ingestion.factory import resolve_benchmarks, sanitize_symbol_for_filename
-    from futurecast.ingestion.storage import align_cross_asset_data
-    from futurecast.models.setup_model import SetupModel, SetupModelConfig, setup_model_path
-    from futurecast.models.trade_risk import TradeRiskConfig, TradeRiskModel, risk_model_path
-    from futurecast.publisher.multi_manager import SETUP_SPEC, _synthetic_candles
-    import numpy as np
-
-    sym = "B-DOGE_USDT"
-    benches = resolve_benchmarks(sym, "coindcx", sector_aware=True)
-    rng = np.random.default_rng(0)
-    aligned = {
-        minutes: align_cross_asset_data(_synthetic_candles(sym, minutes, bars, rng),
-                                        {b: _synthetic_candles(b, minutes, bars, rng) for b in benches},
-                                        freq=f"{minutes}min")
-        for minutes, bars in ((1, 6000), (SETUP_SPEC.ltf_minutes, 6000), (SETUP_SPEC.htf_minutes, 600))
-    }
-    pipe = FeaturePipeline(target_symbol=sym, primary_benchmark=benches[0], secondary_benchmark=benches[-1])
-    feats = pipe.generate_features(aligned[1])
-    entry, context = aligned[SETUP_SPEC.ltf_minutes], aligned[SETUP_SPEC.htf_minutes]
-    model = SetupModel(SetupModelConfig(spec=SETUP_SPEC, max_rounds=40))
-    setups, outcomes, X = setup_dataset(entry, context, pipe.generate_features(entry), sym, SETUP_SPEC)
-    model.fit(X, setups, outcomes)
-    model.backtests = {"3": dashboard_view(run_backtest(setups, outcomes, entry.index, SETUP_SPEC, BacktestConfig()))}
-    clean = sanitize_symbol_for_filename(sym)
-    model.save(setup_model_path(tmp_path / "models", clean))
-    risk = TradeRiskModel(TradeRiskConfig(interval="1m", horizons={"15m": 15}, max_rounds=40))
-    risk.fit(feats, aligned[1][f"{sym}_close"], aligned[1][f"{sym}_high"], aligned[1][f"{sym}_low"])
-    risk.save(risk_model_path(tmp_path / "models", f"{clean}_1m"))
-
-    app = create_app(initial_symbols=[sym], live_mode=False,
-                     persistence_path=tmp_path / "coins.json", models_dir=tmp_path / "models")
-    with TestClient(app) as client:
-        coin = client.get("/api/coins").json()[0]
-        evidence = coin["setup_model"]
-        assert (evidence["entry_interval"], evidence["context_interval"]) == (SETUP_SPEC.entry_interval,
-                                                                            SETUP_SPEC.context_interval)
-        assert set(evidence["targets"]) == {"2", "3", "4"}
-        bt = evidence["backtests"]["3"]
-        assert "trades" not in bt and bt["summary"]["grades"] == ["A+"] and bt["equity"][0]["equity"] == 100.0
-        assert bt["summary"]["costs"] == pytest.approx(SETUP_SPEC.costs())
-        for t in evidence["targets"].values():
-            assert t["status"] in ("edge", "no_edge", "insufficient_data")
-            assert set(t["base_rates"]) == {"A+", "B"}
-            assert "trades" in t["rules_replay"]
-
-        setups = coin["setups"]
-        assert setups["signal"] in ("LONG", "SHORT", "NEUTRAL")
-        assert (setups["entry_interval"], setups["context_interval"]) == (SETUP_SPEC.entry_interval,
-                                                                        SETUP_SPEC.context_interval)
-        # Per-leg fees for the page's notes: a stop (taker + slippage out) costs more than a win (maker out)
-        assert setups["costs"] == pytest.approx(SETUP_SPEC.costs())
-        assert setups["costs"]["lost_pct"] > setups["costs"]["timeout_pct"] > setups["costs"]["won_pct"]
-        assert coin["structure"]["htf"]["interval"] == SETUP_SPEC.context_interval
-        shown = [setups[side] for side in ("long", "short") if setups[side]]
-        assert shown, "synthetic candles should hold at least one setup"
-        for d in shown:
-            assert d["grade"] in ("A+", "B") and d["state"] in ("waiting", "in_trade", "won", "lost", "timeout",
-                                                                "expired", "cancelled")
-            up = d["side"] == "long"
-            assert (d["stop"] < d["entry"] < d["take_profit"]) if up else (d["stop"] > d["entry"] > d["take_profit"])
-            assert [t["target_r"] for t in d["targets"]] == [2.0, 3.0, 4.0]
-            assert 0.0 <= d["probability"] <= 1.0 and 0.0 < d["break_even"] < 1.0
-            if d["status"] != "edge":  # no proven edge: the rules' own win rate for the grade
-                assert d["probability_source"] == "rules" and d["probability"] == d["rules_probability"]
-            assert d["max_leverage"] in (1, 2, 3, 5, 10, 20) and d["size_for_1pct_risk"] > 0
-
-        risk = coin["trade_risk"]
-        assert set(risk) == {"15m"}
-        r = risk["15m"]
-        assert r["bias"] in ("LONG_RISKIER", "SHORT_RISKIER", "BALANCED")
-        assert r["regime"] in ("calm", "normal", "stormy")
-        assert sum(r["regime_probs"].values()) == pytest.approx(1.0, abs=1e-3)
-        assert 0.0 <= r["storm_chance"] <= 1.0
-        for side in ("long", "short"):
-            assert r[side]["worst_move_pct"] > 0
-            assert 1 <= r[side]["score"] <= 99
-            assert r[side]["level"] in ("LOW", "MODERATE", "HIGH", "EXTREME")
-            assert r[side]["max_leverage"] in (1, 2, 3, 5, 10, 20)
-            assert r[side]["status"] in ("edge", "no_edge", "insufficient_data")
+def test_reload_endpoint(test_app):
+    with TestClient(test_app) as client:
+        assert client.post("/api/coins/B-DOGE_USDT/reload").json() == {"status": "offline", "symbol": "B-DOGE_USDT"}
+        assert client.post("/api/coins/B-NOPE_USDT/reload").status_code == 404
 
 
 def test_api_add_and_delete_coin(test_app):
@@ -258,15 +143,14 @@ def test_api_add_and_delete_coin(test_app):
         added = add_resp.json()
         assert added["symbol"] == "B-PEPE_USDT"
         assert added["sector"] == "MEME"
-        assert added["benchmarks"] == ["B-DOGE_USDT", "B-BTC_USDT"]
+        assert added["momentum"]["horizons"]["4h"]["versus"]["symbol"] == "B-DOGE_USDT"  # meme coins against DOGE
 
-        # Add NFT token B-BLUR_USDT: untrained, so no borrowed or invented models
+        # Add NFT token B-BLUR_USDT: statistics straight away, nothing to train
         blur_resp = client.post("/api/coins", json={"symbol": "B-BLUR_USDT"})
         assert blur_resp.status_code == 200
         blur_added = blur_resp.json()
         assert blur_added["symbol"] == "B-BLUR_USDT"
-        assert blur_added["model_predictions"] == {}
-        assert blur_added["setup_model"] is None
+        assert blur_added["status"] == "ready" and "4h" in blur_added["momentum"]["horizons"]
 
         # Check it is in active list
         get_resp = client.get("/api/coins")
@@ -296,7 +180,6 @@ def test_websocket_stream_initial_state(test_app):
             init_data = websocket.receive_text()
             payload = json.loads(init_data)
             assert payload["type"] == "INIT_STATE"
-            assert payload["execution_disabled"] is True
             assert len(payload["coins"]) >= 2
 
             # Test sending client action

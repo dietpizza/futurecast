@@ -1,28 +1,22 @@
-"""Tests for synthetic data and continuous timestamp alignment."""
+"""Tests for continuous timestamp alignment of a coin and its benchmark."""
 
-from datetime import datetime, timezone
-from futurecast.ingestion.synthetic import generate_synthetic_data
+import numpy as np
+import pandas as pd
+
 from futurecast.ingestion.storage import align_cross_asset_data
 
 
-def test_synthetic_data_generation():
-    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
-    df = generate_synthetic_data("DOGEUSDT", start=start, periods=100, base_price=0.15, volatility=0.6)
-    assert len(df) == 100
-    assert "timestamp" in df.columns
-    assert "close" in df.columns
-    assert "funding_rate" in df.columns
-    # Ensure High >= max(Open, Close) and Low <= min(Open, Close)
-    assert (df["high"] >= df["close"]).all()
-    assert (df["high"] >= df["open"]).all()
-    assert (df["low"] <= df["close"]).all()
-    assert (df["low"] <= df["open"]).all()
+def _candles(symbol: str, periods: int, price: float) -> pd.DataFrame:
+    close = price * np.exp(np.cumsum(np.random.default_rng(len(symbol)).normal(0, 0.001, periods)))
+    return pd.DataFrame({
+        "timestamp": pd.date_range("2025-01-01", periods=periods, freq="1min", tz="UTC"), "symbol": symbol,
+        "open": close, "high": close * 1.001, "low": close * 0.999, "close": close, "volume": 1.0,
+    })
 
 
 def test_cross_asset_alignment_with_gap_ffill():
-    start = datetime(2025, 1, 1, tzinfo=timezone.utc)
-    target = generate_synthetic_data("DOGEUSDT", start=start, periods=60, base_price=0.15, volatility=0.6)
-    btc = generate_synthetic_data("BTCUSDT", start=start, periods=60, base_price=65000.0, volatility=0.4)
+    target = _candles("DOGEUSDT", 60, 0.15)
+    btc = _candles("BTCUSDT", 60, 65000.0)
 
     # Inject a 2-minute gap in BTC (indices 10 and 11)
     btc_gapped = btc.drop(index=[10, 11]).reset_index(drop=True)
@@ -34,3 +28,14 @@ def test_cross_asset_alignment_with_gap_ffill():
     assert "DOGEUSDT_close" in aligned.columns
     assert "BTCUSDT_close" in aligned.columns
     assert not aligned["BTCUSDT_close"].isna().any()
+    assert (aligned["BTCUSDT_volume"].iloc[10:12] == 0).all()  # filled candles traded nothing
+
+
+def test_a_gap_longer_than_the_fill_limit_drops_its_candles():
+    target = _candles("DOGEUSDT", 60, 0.15)
+    btc = _candles("BTCUSDT", 60, 65000.0).drop(index=range(20, 25)).reset_index(drop=True)
+
+    aligned = align_cross_asset_data(target, {"BTCUSDT": btc}, max_gap_ffill_minutes=3)
+    gap = pd.date_range("2025-01-01 00:20", periods=5, freq="1min", tz="UTC")
+    assert not aligned.index.isin(gap).any() and aligned["BTCUSDT_close"].notna().all()
+    assert aligned.index[-1] == pd.Timestamp("2025-01-01 00:59", tz="UTC")

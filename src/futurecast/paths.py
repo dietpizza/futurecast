@@ -1,7 +1,7 @@
 """Where futurecast keeps its runtime files.
 
-Everything the app reads or writes at runtime (config overrides, tracked coins, trained
-models, forecast logs) lives under one home folder: ~/.futurecast, or $FUTURECAST_HOME
+Everything the app reads or writes at runtime (config overrides, tracked coins, the candle
+cache) lives under one home folder: ~/.futurecast, or $FUTURECAST_HOME
 when set. Relative paths given to futurecast are taken relative to that folder.
 """
 
