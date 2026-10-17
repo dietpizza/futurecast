@@ -1,7 +1,9 @@
 # Plan: rewrite DeltaRisk's backend in Go, without LightGBM
 
 Written 2026-10-18 at the user's request. Phase 0 done 2026-10-18 (fixtures: ETH/BTC, 5m 20 days, 15m 40, 1h 120
-ending 2026-10-17 20:00 UTC, 10.5 MB; `internal/testdata/parity/inputs.json` has the spans). Read `CLAUDE.md` first; this file only says what
+ending 2026-10-17 20:00 UTC, 10.5 MB; `internal/testdata/parity/inputs.json` has the spans). Phases 1–2 done 2026-10-18; phase 2 added
+`internal/pq` (the Parquet reader/writer behind the caches and the parity tests) and `internal/binance/binancetest`
+(the fake Binance server and clock). Read `CLAUDE.md` first; this file only says what
 changes and in what order.
 
 ## Goal
