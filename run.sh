@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# futurecast: start the CoinDCX futures web dashboard
+# deltarisk: start the CoinDCX futures web dashboard
 #
 #   ./run.sh                    port 8000 on every interface  (PORT=9000 ./run.sh to change)
-#   ./run.sh --port 8002        any `futurecast --help` option is passed through
+#   ./run.sh --port 8002        any `deltarisk --help` option is passed through
 #   ./run.sh --offline          simulated candles, no network
 # ==============================================================================
 
@@ -18,9 +18,9 @@ for arg in "$@"; do
 done
 
 if command -v uv >/dev/null 2>&1; then
-    RUNNER=(uv run futurecast)
-elif [ -x ".venv/bin/futurecast" ]; then
-    RUNNER=(.venv/bin/futurecast)
+    RUNNER=(uv run deltarisk)
+elif [ -x ".venv/bin/deltarisk" ]; then
+    RUNNER=(.venv/bin/deltarisk)
 else
     echo -e "\033[1;31mError: 'uv' not found and '.venv' not found. Please install uv or setup venv.\033[0m"
     exit 1

@@ -8,8 +8,8 @@
   import Watchlist from "./components/Watchlist.svelte";
 
   start();
-  // For previewing risk states from the console: futurecast.stopLive(), then edit futurecast.app.coins
-  Object.assign(window, { futurecast: { app, stopLive } });
+  // For previewing risk states from the console: deltarisk.stopLive(), then edit deltarisk.app.coins
+  Object.assign(window, { deltarisk: { app, stopLive } });
 
   // "/" or Ctrl/Cmd+K opens the add-pair drawer, Escape closes it
   function onKeydown(e: KeyboardEvent): void {

@@ -4,7 +4,7 @@ import asyncio
 import threading
 import time
 
-from futurecast.publisher.multi_manager import MultiCoinStreamManager, SymbolWorker
+from deltarisk.publisher.multi_manager import MultiCoinStreamManager, SymbolWorker
 
 
 def test_next_coin_downloads_while_the_previous_one_trains(monkeypatch):

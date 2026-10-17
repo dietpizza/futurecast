@@ -1,4 +1,4 @@
-"""Command-line entry point: the futurecast web dashboard, a backtest of the setup rules
+"""Command-line entry point: the deltarisk web dashboard, a backtest of the setup rules
 (fair-value-gap setups or wedge breakouts), and the risk models' walk-forward check."""
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ def dashboard(
     port: int = typer.Option(8000, "--port", "-p", help="Port to serve the dashboard on"),
     offline: bool = typer.Option(False, "--offline", help="Use simulated candles instead of live Binance data"),
 ) -> None:
-    """Start the futurecast web dashboard (`futurecast web` works too)."""
-    from futurecast.publisher.web_server import run_web_server
+    """Start the deltarisk web dashboard (`deltarisk web` works too)."""
+    from deltarisk.publisher.web_server import run_web_server
 
     run_web_server(host=host, port=port, live=not offline)
 
@@ -58,11 +58,11 @@ def backtest(
     """Backtest the setup rules on Binance history (downloads go to the candle cache)."""
     import pandas as pd
 
-    from futurecast.backtest import BacktestConfig, backtest_candles, backtest_wedge_candles, format_report
-    from futurecast.config import load_config
-    from futurecast.features.setups import SetupSpec
-    from futurecast.features.wedges import WedgeSpec
-    from futurecast.publisher.multi_manager import _binance_client
+    from deltarisk.backtest import BacktestConfig, backtest_candles, backtest_wedge_candles, format_report
+    from deltarisk.config import load_config
+    from deltarisk.features.setups import SetupSpec
+    from deltarisk.features.wedges import WedgeSpec
+    from deltarisk.publisher.multi_manager import _binance_client
 
     strategy = strategy.lower()
     if strategy not in ("fvg", "wedge"):
@@ -125,11 +125,11 @@ def risk(
     """Walk-forward check of the risk models on Binance history, and today's readings."""
     import pandas as pd
 
-    from futurecast.config import load_config
-    from futurecast.ingestion.factory import get_symbol_sector, resolve_benchmark
-    from futurecast.publisher.multi_manager import HISTORY_BARS, SymbolWorker, _binance_client
-    from futurecast.stats.regime import WINDOW_BY_NAME, WINDOWS, RegimeSpec, regime_frame
-    from futurecast.stats.risk import (
+    from deltarisk.config import load_config
+    from deltarisk.ingestion.factory import get_symbol_sector, resolve_benchmark
+    from deltarisk.publisher.multi_manager import HISTORY_BARS, SymbolWorker, _binance_client
+    from deltarisk.stats.regime import WINDOW_BY_NAME, WINDOWS, RegimeSpec, regime_frame
+    from deltarisk.stats.risk import (
         SIDES, TIERS, RiskSpec, WindowRiskModel, coin_tier, latest_reading, liquidation_move, stop_move,
         walk_forward, window_data,
     )
@@ -242,7 +242,7 @@ def risk(
 
 
 def main() -> None:
-    # `futurecast web ...` predates the dashboard being the only command; accept it as-is.
+    # `deltarisk web ...` predates the dashboard being the only command; accept it as-is.
     if sys.argv[1:2] == ["web"]:
         del sys.argv[1]
     if sys.argv[1:2] == ["backtest"]:

@@ -25,7 +25,7 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from futurecast.features.setups import SetupSpec
+from deltarisk.features.setups import SetupSpec
 
 def _first(mask: np.ndarray) -> int:
     """Position of the first True, or len(mask) when there is none."""

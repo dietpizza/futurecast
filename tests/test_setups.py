@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from futurecast.features.setups import SetupSpec, find_setups
-from futurecast.labels.setups import break_even, setup_outcomes
+from deltarisk.features.setups import SetupSpec, find_setups
+from deltarisk.labels.setups import break_even, setup_outcomes
 
 SPEC = SetupSpec(ltf_minutes=1, htf_minutes=15, ltf_swing_len=1, htf_swing_len=1, fill_window=5, max_hold=20)
 START = pd.Timestamp("2026-03-02 00:00", tz="UTC")  # a Monday

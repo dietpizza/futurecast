@@ -18,8 +18,8 @@ import httpx
 import numpy as np
 import pandas as pd
 
-from futurecast.ingestion.cache import CandleCache, FundingCache
-from futurecast.ingestion.factory import extract_base_and_quote
+from deltarisk.ingestion.cache import CandleCache, FundingCache
+from deltarisk.ingestion.factory import extract_base_and_quote
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +104,7 @@ class BinancePublicClient:
             self._client = httpx.Client(
                 base_url=self.base_url,
                 timeout=self.timeout,
-                headers={"User-Agent": "futurecast-research/1.0"},
+                headers={"User-Agent": "deltarisk-research/1.0"},
             )
         return self._client
 
@@ -191,6 +191,18 @@ class BinancePublicClient:
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as err:
             logger.debug(f"Binance live prices failed: {err}")
             return {}
+
+    def fetch_tickers_24h(self) -> List[Dict[str, Any]]:
+        """Rolling 24h statistics of every Binance USD-M symbol in one call (weight 40): symbol,
+        lastPrice, priceChangePercent, quoteVolume, … as Binance sends them (prices in market units)."""
+        return self._get("/fapi/v1/ticker/24hr")
+
+    def fetch_recent_closes(self, market: str, minutes: int) -> List[Tuple[int, float]]:
+        """(close time ms, close) of a Binance market's last `minutes` closed 1-minute candles, oldest
+        first (weight 1 under 100 candles, 2 under 500)."""
+        rows = self._get("/fapi/v1/klines", {"symbol": market, "interval": "1m", "limit": minutes + 1})
+        now_ms = int(time.time() * 1000)
+        return [(int(r[6]) + 1, float(r[4])) for r in rows if int(r[6]) + 1 <= now_ms]
 
     # ───────── funding rates ─────────
 

@@ -6,10 +6,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from futurecast.config import load_config
-from futurecast.publisher.multi_manager import SymbolWorker
-from futurecast.stats.regime import WINDOW_BY_NAME, Window
-from futurecast.stats.risk import (
+from deltarisk.config import load_config
+from deltarisk.publisher.multi_manager import SymbolWorker
+from deltarisk.stats.regime import WINDOW_BY_NAME, Window
+from deltarisk.stats.risk import (
     HAR_COLUMNS,
     RiskSpec,
     WindowRiskModel,
@@ -146,7 +146,7 @@ def test_models_retrain_after_a_day():
 
 
 def test_saved_models_are_reused_only_when_they_match(tmp_path):
-    from futurecast.stats.risk import CoinRisk, load_models, save_models
+    from deltarisk.stats.risk import CoinRisk, load_models, save_models
 
     worker = SymbolWorker(SYM, BENCH, "OTHER", load_config())
     worker.load_synthetic()
@@ -169,7 +169,7 @@ def test_saved_models_are_reused_only_when_they_match(tmp_path):
 
 
 def test_a_quick_restart_reuses_the_saved_models(monkeypatch):
-    from futurecast.stats import risk as risk_module
+    from deltarisk.stats import risk as risk_module
 
     worker = SymbolWorker(SYM, BENCH, "OTHER", load_config())
     worker.load_synthetic()

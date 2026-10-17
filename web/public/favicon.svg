@@ -1,10 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <!-- Notched tile in the pause-menu colors: solid past line, dashed forecast, red landing dot. Also the header logo. -->
-  <path d="M7 0H32V25L25 32H0V7z" fill="#0b0608" />
-  <path d="M7.75 1H31V24.25L24.25 31H1V7.75z" fill="none" stroke="#5ef6ff" stroke-width="2" />
-  <g fill="none" stroke="#5ef6ff" stroke-width="3" stroke-linecap="square" stroke-linejoin="miter">
-    <path d="M6.5 22l4.5-4.5 4 2.75L20.5 14" />
-    <path d="M20.5 14L25 9.5" stroke-dasharray="1.5 3.5" />
-  </g>
-  <circle cx="25" cy="9.5" r="3" fill="#ff4a66" />
+  <!-- DeltaRisk mark, flat: a cyan tile, a dark Δ cut out of it, a red square for risk. Also the header logo. -->
+  <rect width="32" height="32" fill="#5ef6ff" />
+  <path fill="#0b0608" fill-rule="evenodd" d="M16 5.5L27 26H5zM16 13.2L11.3 22h9.4z" />
+  <rect x="24" y="2" width="6" height="6" fill="#ff4a66" />
 </svg>

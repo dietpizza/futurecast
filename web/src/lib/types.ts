@@ -94,3 +94,21 @@ export interface CatalogItem {
   description: string;
   coindcx_url: string;
 }
+
+// The add-pair drawer's market board (GET /api/market, publisher/market_board.py)
+export type BoardWindow = "5m" | "15m" | "1h" | "4h" | "24h";
+
+export interface MarketCoin {
+  price: number; // in the pair's units
+  volume_24h: number; // USDT
+  change: Record<BoardWindow, number | null>; // %
+}
+
+export interface Market {
+  windows: BoardWindow[];
+  updated_at: number | null; // ms
+  markets: number;
+  backfilled: number; // markets whose 5m–4h history has been filled in
+  coins: Record<string, MarketCoin>;
+  offline?: boolean;
+}

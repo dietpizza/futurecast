@@ -1,4 +1,4 @@
-# Example overrides: copy to ~/.futurecast/config/assets.yaml to use (this repo copy is not read).
+# Example overrides: copy to ~/.deltarisk/config/assets.yaml to use (this repo copy is not read).
 
 # Data source (strictly public read-only endpoints, no authentication required)
 data_source:

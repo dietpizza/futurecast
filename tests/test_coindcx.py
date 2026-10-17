@@ -1,8 +1,8 @@
 """Tests for CoinDCX symbol handling: exchange detection and benchmark routing."""
 
-from futurecast.config import load_config
-from futurecast.ingestion.factory import detect_exchange, get_symbol_sector, resolve_benchmark
-from futurecast.publisher.multi_manager import SymbolWorker
+from deltarisk.config import load_config
+from deltarisk.ingestion.factory import detect_exchange, get_symbol_sector, resolve_benchmark
+from deltarisk.publisher.multi_manager import SymbolWorker
 
 
 def test_detect_exchange() -> None:

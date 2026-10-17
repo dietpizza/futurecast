@@ -1,5 +1,5 @@
-"""futurecast: a read-only intraday risk dashboard for CoinDCX futures, plus a backtest of setup rules."""
+"""deltarisk: a read-only intraday risk dashboard for CoinDCX futures, plus a backtest of setup rules."""
 
-from futurecast.cli import main
+from deltarisk.cli import main
 
 __all__ = ["main"]

@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from futurecast.stats.regime import WINDOW_BY_NAME, WINDOWS, regime_frame, regime_view
+from deltarisk.stats.regime import WINDOW_BY_NAME, WINDOWS, regime_frame, regime_view
 
 SYM = "B-TEST_USDT"
 HOUR = WINDOW_BY_NAME["1h"]  # 12 candles of 5m, looking back 36
@@ -62,7 +62,7 @@ def test_no_reading_without_history_and_none_for_missing_charts():
 
 
 def test_trend_record_counts_what_followed_trending_readings():
-    from futurecast.stats.regime import trend_record
+    from deltarisk.stats.regime import trend_record
 
     # A random history, then a long straight rise: its trending-bullish readings are followed by more rise
     returns = np.r_[np.random.default_rng(5).normal(0, SIGMA, 4000), np.full(200, SIGMA)]

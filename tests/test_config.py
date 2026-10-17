@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from futurecast.config import load_config
+from deltarisk.config import load_config
 
 REPO_CONFIG = Path(__file__).resolve().parents[1] / "config"
 

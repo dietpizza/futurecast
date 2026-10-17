@@ -3,7 +3,7 @@
 import numpy as np
 import pandas as pd
 
-from futurecast.ingestion.storage import align_cross_asset_data
+from deltarisk.ingestion.storage import align_cross_asset_data
 
 
 def _candles(symbol: str, periods: int, price: float) -> pd.DataFrame:

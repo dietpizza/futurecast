@@ -2,7 +2,7 @@
   import { app } from "../lib/live.svelte";
   import Icon from "./Icon.svelte";
 
-  const THEME_KEY = "fc-theme";
+  const THEME_KEY = "deltarisk.theme";
   const STATUS = { connecting: "Connecting", live: "Live", reconnecting: "Reconnecting" };
 
   // index.html sets <html data-theme> before first paint; this follows the OS until the user picks one.
@@ -53,7 +53,7 @@
       <div class="flex items-center gap-2.5">
         <!-- Same file as the favicon -->
         <img class="block size-7" src="/favicon.svg" alt="" width="28" height="28" />
-        <span class="text-[22px] leading-none font-bold tracking-[0.08em] uppercase">Future<span class="text-accent-text">Cast</span></span>
+        <span class="text-[22px] leading-none font-bold tracking-[0.08em] uppercase">Delta<span class="text-accent-text">Risk</span></span>
       </div>
       <button id="theme-toggle" class="icon-btn border-border" onclick={toggleTheme} aria-label={themeLabel} data-tooltip={themeLabel}>
         <Icon name={theme === "dark" ? "sun" : "moon"} />

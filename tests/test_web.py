@@ -3,7 +3,7 @@
 import json
 import pytest
 from starlette.testclient import TestClient
-from futurecast.publisher.web_server import create_app
+from deltarisk.publisher.web_server import create_app
 
 
 @pytest.fixture
@@ -20,14 +20,14 @@ def test_web_serves_the_built_page(tmp_path):
     """/ serves web/dist/index.html (revalidated on every load); hashed assets may be cached for good."""
     dist = tmp_path / "dist"
     (dist / "assets").mkdir(parents=True)
-    (dist / "index.html").write_text('<title>FutureCast</title><script src="/assets/index-abc.js"></script>')
+    (dist / "index.html").write_text('<title>DeltaRisk</title><script src="/assets/index-abc.js"></script>')
     (dist / "assets" / "index-abc.js").write_text("console.log(1)")
     (dist / "favicon.svg").write_text("<svg/>")
     app = create_app(initial_symbols=[], live_mode=False, persistence_path=tmp_path / "t.json", web_dist=dist)
     with TestClient(app) as client:
         page = client.get("/")
         assert page.status_code == 200
-        assert "FutureCast" in page.text
+        assert "DeltaRisk" in page.text
         assert page.headers["cache-control"] == "no-cache"
 
         asset = client.get("/assets/index-abc.js")
@@ -222,7 +222,7 @@ def test_watchlist_starts_empty_without_default_coins(tmp_path):
 
 
 def test_api_coins_serve_risk_readings(test_app):
-    from futurecast.stats.regime import WINDOWS
+    from deltarisk.stats.regime import WINDOWS
 
     with TestClient(test_app) as client:
         coins = {c["symbol"]: c for c in client.get("/api/coins").json()}

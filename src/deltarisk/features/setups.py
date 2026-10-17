@@ -30,7 +30,7 @@ from typing import ClassVar, Dict, Tuple
 import numpy as np
 import pandas as pd
 
-from futurecast.features.structure import CHOCH, UP, fair_value_gaps, market_structure
+from deltarisk.features.structure import CHOCH, UP, fair_value_gaps, market_structure
 
 
 _UNIT_MINUTES = {"m": 1, "h": 60, "d": 1440}

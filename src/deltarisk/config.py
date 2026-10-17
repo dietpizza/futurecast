@@ -1,4 +1,4 @@
-"""Configuration loader and schema validation for futurecast."""
+"""Configuration loader and schema validation for deltarisk."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 import yaml
 from pydantic import BaseModel, Field
 
-from futurecast.paths import resolve
+from deltarisk.paths import resolve
 
 
 class DataSourceConfig(BaseModel):
@@ -38,6 +38,6 @@ def load_yaml(path: Path) -> dict[str, Any]:
 
 
 def load_config(config_dir: str | Path = "config") -> AppConfig:
-    """Settings from `config_dir` (~/.futurecast/config by default); missing files keep the defaults."""
+    """Settings from `config_dir` (~/.deltarisk/config by default); missing files keep the defaults."""
     cfg_path = resolve(config_dir)
     return AppConfig(assets=AssetsConfig(**load_yaml(cfg_path / "assets.yaml")))

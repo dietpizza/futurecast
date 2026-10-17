@@ -15,19 +15,20 @@ import uvicorn
 
 from fastapi.staticfiles import StaticFiles
 
-from futurecast.config import load_config
-from futurecast.ingestion.coindcx_catalog import get_all_coindcx_instruments
-from futurecast.ingestion.factory import detect_exchange
-from futurecast.publisher.multi_manager import MultiCoinStreamManager
+from deltarisk.config import load_config
+from deltarisk.ingestion.coindcx_catalog import get_all_coindcx_instruments
+from deltarisk.ingestion.factory import detect_exchange
+from deltarisk.publisher.market_board import WINDOW_NAMES, MarketBoard
+from deltarisk.publisher.multi_manager import MultiCoinStreamManager, _binance_client
 
 logger = logging.getLogger(__name__)
 
 # The Svelte page, built by `mise run build` (vite) into web/dist at the repository root
 WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
 
-NOT_BUILT = """<!DOCTYPE html><meta charset="utf-8"><title>FutureCast</title>
+NOT_BUILT = """<!DOCTYPE html><meta charset="utf-8"><title>DeltaRisk</title>
 <body style="font-family: sans-serif; max-width: 40em; margin: 4em auto; line-height: 1.5">
-<h1>FutureCast</h1>
+<h1>DeltaRisk</h1>
 <p>The dashboard hasn't been built. Run <code>mise run build</code> and reload, or use <code>mise dev</code>
 for the development server (it serves the page on port 5000).</p>
 <p>The API is up: <a href="/api/coins">/api/coins</a>.</p>"""
@@ -65,6 +66,7 @@ def create_app(
     The page is served from `web_dist` (the frontend's build output); without a build, / says how to make one.
     """
     manager = MultiCoinStreamManager(config=load_config(), persistence_path=persistence_path, live=live_mode)
+    board = MarketBoard(lambda: _binance_client(manager.config.assets))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -84,6 +86,7 @@ def create_app(
         yield
         # Shutdown
         manager.stop()
+        board.stop()
         streaming_task.cancel()
         try:
             await streaming_task
@@ -91,7 +94,7 @@ def create_app(
             pass
 
     app = FastAPI(
-        title="FutureCast",
+        title="DeltaRisk",
         description="Intraday risk readings for CoinDCX futures (read-only)",
         lifespan=lifespan,
         docs_url=None,
@@ -125,6 +128,18 @@ def create_app(
     async def get_coindcx_futures() -> List[Dict[str, Any]]:
         """Every CoinDCX futures pair the add-coin search offers; the page searches and filters it."""
         return get_all_coindcx_instruments()
+
+    @app.get("/api/market")
+    async def get_market() -> Dict[str, Any]:
+        """Price, 24h volume and the change over 5m … 24h for every catalog pair (the add-pair drawer).
+        The board starts on the first request and stops when the drawer has been closed for a while;
+        offline there is no market data."""
+        if not manager.live:
+            return {"windows": list(WINDOW_NAMES), "updated_at": None, "markets": 0, "backfilled": 0, "coins": {}, "offline": True}
+        board.touch()
+        await asyncio.to_thread(board.wait_ready, 5.0)
+        symbols = [item["symbol"] for item in get_all_coindcx_instruments()]
+        return await asyncio.to_thread(board.view, symbols)
 
     @app.post("/api/coins")
     async def add_coin(req: AddCoinRequest) -> Dict[str, Any]:
@@ -207,5 +222,5 @@ def run_web_server(host: str = "0.0.0.0", port: int = 8000, live: bool = True) -
     """Launch the Web UI server."""
     app = create_app(live_mode=live)
     shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host  # a wildcard bind is not a browsable address
-    print(f"\n⚡ FutureCast Web UI running at: http://{shown}:{port} (listening on {host})\n")
+    print(f"\nΔ DeltaRisk running at: http://{shown}:{port} (listening on {host})\n")
     uvicorn.run(app, host=host, port=port, log_level="warning")

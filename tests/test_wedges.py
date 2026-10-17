@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from futurecast.backtest import BacktestConfig, backtest_wedge_candles, format_report
-from futurecast.features.wedges import WedgeSpec, average_true_range, find_wedge_setups
-from futurecast.labels.setups import resolve_trade
-from futurecast.labels.wedges import wedge_outcomes
+from deltarisk.backtest import BacktestConfig, backtest_wedge_candles, format_report
+from deltarisk.features.wedges import WedgeSpec, average_true_range, find_wedge_setups
+from deltarisk.labels.setups import resolve_trade
+from deltarisk.labels.wedges import wedge_outcomes
 
 SPEC = WedgeSpec(minutes=60, swing_len=2, window=40, apex_min=3, apex_max=40, atr_len=3, volume_window=5,
                  retest_window=3, targets=(2.0, "measured"), breakeven_r=None, max_hold=30)

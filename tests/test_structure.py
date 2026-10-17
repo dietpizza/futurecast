@@ -3,8 +3,8 @@
 import numpy as np
 import pandas as pd
 
-from futurecast.features.setups import SetupSpec, find_setups
-from futurecast.features.structure import (
+from deltarisk.features.setups import SetupSpec, find_setups
+from deltarisk.features.structure import (
     BOS, CHOCH, DOWN, UP, fair_value_gaps, market_structure, swing_points,
 )
 

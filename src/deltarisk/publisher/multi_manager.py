@@ -28,15 +28,15 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import numpy as np
 import pandas as pd
 
-from futurecast.config import AppConfig, AssetsConfig, load_config
-from futurecast.features.setups import interval_minutes
-from futurecast.ingestion.binance import BinancePublicClient
-from futurecast.ingestion.cache import CandleCache, FundingCache
-from futurecast.ingestion.factory import extract_base_and_quote, get_symbol_sector, resolve_benchmark
-from futurecast.ingestion.storage import align_cross_asset_data
-from futurecast.paths import resolve
-from futurecast.stats import funding_view
-from futurecast.stats.risk import TIERS, CoinRisk, coin_tier, liquidation_move, load_models, save_models, stop_move
+from deltarisk.config import AppConfig, AssetsConfig, load_config
+from deltarisk.features.setups import interval_minutes
+from deltarisk.ingestion.binance import BinancePublicClient
+from deltarisk.ingestion.cache import CandleCache, FundingCache
+from deltarisk.ingestion.factory import extract_base_and_quote, get_symbol_sector, resolve_benchmark
+from deltarisk.ingestion.storage import align_cross_asset_data
+from deltarisk.paths import resolve
+from deltarisk.stats import funding_view
+from deltarisk.stats.risk import TIERS, CoinRisk, coin_tier, liquidation_move, load_models, save_models, stop_move
 
 logger = logging.getLogger(__name__)
 

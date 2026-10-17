@@ -11,7 +11,7 @@ from typing import Dict, Optional
 import numpy as np
 import pandas as pd
 
-from futurecast.features.setups import interval_minutes
+from deltarisk.features.setups import interval_minutes
 
 FUNDING_CHART = "1h"
 FUNDING_DAYS = 90

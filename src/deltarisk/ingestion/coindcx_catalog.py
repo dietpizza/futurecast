@@ -11,8 +11,8 @@ import time
 from typing import Any, Dict, List
 import httpx
 
-from futurecast.ingestion.binance import BinancePublicClient
-from futurecast.ingestion.factory import extract_base_and_quote, get_symbol_sector
+from deltarisk.ingestion.binance import BinancePublicClient
+from deltarisk.ingestion.factory import extract_base_and_quote, get_symbol_sector
 
 logger = logging.getLogger(__name__)
 

@@ -1,8 +1,8 @@
-"""Shared test setup: a throwaway futurecast home folder and an offline coin search."""
+"""Shared test setup: a throwaway deltarisk home folder and an offline coin search."""
 
 import pytest
 
-from futurecast.ingestion import coindcx_catalog
+from deltarisk.ingestion import coindcx_catalog
 
 
 class _OfflineBinance:
@@ -11,10 +11,15 @@ class _OfflineBinance:
 
 
 @pytest.fixture(autouse=True)
-def futurecast_home(tmp_path, monkeypatch):
-    """Point FUTURECAST_HOME at a temp folder so tests never touch ~/.futurecast."""
-    home = tmp_path / "futurecast_home"
-    monkeypatch.setenv("FUTURECAST_HOME", str(home))
+def deltarisk_home(tmp_path, monkeypatch):
+    """Point DELTARISK_HOME at a temp folder so tests never touch ~/.deltarisk."""
+    home = tmp_path / "deltarisk_home"
+    monkeypatch.setenv("DELTARISK_HOME", str(home))
+    monkeypatch.delenv("FUTURECAST_HOME", raising=False)
+    # Safety net: even a test that clears the environment never sees (or moves) the real folders
+    from deltarisk import paths
+    monkeypatch.setattr(paths, "DEFAULT_HOME", str(tmp_path / "default_home"))
+    monkeypatch.setattr(paths, "LEGACY_HOME", str(tmp_path / "legacy_home"))
     return home
 
 

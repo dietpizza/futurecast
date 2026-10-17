@@ -39,8 +39,8 @@ from typing import ClassVar, Dict, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from futurecast.features.setups import SetupSpec, interval_minutes, interval_name
-from futurecast.features.structure import swing_points
+from deltarisk.features.setups import SetupSpec, interval_minutes, interval_name
+from deltarisk.features.structure import swing_points
 
 _ON_LINE = 1e-9  # closes this close to a line (relative) count as on it, not through it
 

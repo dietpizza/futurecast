@@ -30,7 +30,7 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from futurecast.features.setups import interval_minutes
+from deltarisk.features.setups import interval_minutes
 
 
 @dataclass(frozen=True)

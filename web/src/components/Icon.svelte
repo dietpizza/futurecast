@@ -2,6 +2,7 @@
   // The page's line icons, drawn on a 16-unit grid with the current text color.
   const PATHS = {
     plus: "M8 3v10M3 8h10",
+    check: "M3.5 8.5l3 3 6-7",
     close: "M4.5 4.5l7 7M11.5 4.5l-7 7",
     "close-lg": "M4 4l8 8M12 4l-8 8",
     "close-sm": "M5 5l6 6M11 5l-6 6",

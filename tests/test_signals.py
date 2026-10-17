@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from futurecast.stats.signals import funding, funding_view, percentile_of
+from deltarisk.stats.signals import funding, funding_view, percentile_of
 
 SYM = "B-TEST_USDT"
 

@@ -18,8 +18,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from futurecast.features.wedges import WedgeSpec
-from futurecast.labels.setups import outcome_table, record_trade, resolve_trade, target_key, target_multiples
+from deltarisk.features.wedges import WedgeSpec
+from deltarisk.labels.setups import outcome_table, record_trade, resolve_trade, target_key, target_multiples
 
 
 def wedge_outcomes(setups: pd.DataFrame, high: pd.Series, low: pd.Series, close: pd.Series,

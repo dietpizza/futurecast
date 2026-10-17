@@ -27,7 +27,7 @@ a card full of statistics:
 | "Bad case" | The 1-in-10 adverse move within the window (90th percentile of the move against the position) |
 | Risk score scale | In the trader's money (depends on leverage and stop), not relative to the coin's own past |
 | Old statistics | Removed: `stats/momentum.py` event study, variance ratio, IC, `momentum_signal`, taker-flow and order-book columns, and their page code. Taker flow and funding become model inputs |
-| Backtest command | Unchanged (`futurecast backtest`, fair-value gaps and wedges) |
+| Backtest command | Unchanged (`deltarisk backtest`, fair-value gaps and wedges) |
 | Watchlist size | Small (a handful to ~20 coins); one model per coin is fine |
 
 ## Open questions to settle first (ask the user)
@@ -154,7 +154,7 @@ gap between train and test so overlapping targets don't leak. Report per coin, w
 
 A coin and window that fails coverage shows "—" with a tooltip saying why, instead of a number.
 
-CLI: `uv run futurecast risk B-SOL_USDT [--window 1h] [--stop 5] [--leverage 20]` prints the check per
+CLI: `uv run deltarisk risk B-SOL_USDT [--window 1h] [--stop 5] [--leverage 20]` prints the check per
 window and side, and today's readings. **Build this and show the user real numbers before any UI work.**
 
 ## Backend changes
@@ -193,8 +193,8 @@ window and side, and today's readings. **Build this and show the user real numbe
 
 1. 5m chart and inputs (backend only) + tests.
 2. Regime rules + tests; check the label distribution on real coins.
-3. Risk model, walk-forward check, `futurecast risk` CLI. **Stop here and show the user the report** on
-   their coins (copy the user's candle cache into a temp `FUTURECAST_HOME`, see `CLAUDE.md`).
+3. Risk model, walk-forward check, `deltarisk risk` CLI. **Stop here and show the user the report** on
+   their coins (copy the user's candle cache into a temp `DELTARISK_HOME`, see `CLAUDE.md`).
 4. Live scoring, snapshot and API, tiers and leverage.
 5. New page.
 6. Delete the old statistics, update `CLAUDE.md` and `README.md`, and update the memory note that said

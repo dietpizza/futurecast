@@ -2,7 +2,7 @@
 
 import httpx
 
-from futurecast.ingestion import coindcx_catalog
+from deltarisk.ingestion import coindcx_catalog
 
 
 class FakeBinance:

@@ -3,9 +3,19 @@
 
 import { STOPS, WINDOWS } from "./risk";
 import { isSort, nextSort, type Sort, type SortKey } from "./sort";
-import type { CatalogItem, Coin, Tier, WindowName } from "./types";
+import type { BoardWindow, CatalogItem, Coin, Market, Tier, WindowName } from "./types";
 
 type Connection = "connecting" | "live" | "reconnecting";
+
+// Settings saved before the rename (FutureCast → DeltaRisk) carry over once
+try {
+  for (const key of ["window", "stop", "sort", "board.window", "board.sort"]) {
+    const old = localStorage.getItem(`futurecast.${key}`);
+    if (old !== null && localStorage.getItem(`deltarisk.${key}`) === null) localStorage.setItem(`deltarisk.${key}`, old);
+  }
+} catch {
+  // storage unavailable: nothing to carry over
+}
 
 // The window and the stop are remembered per browser; storage may be unavailable (private windows)
 function stored<T>(key: string, allowed: readonly T[], fallback: T): T {
@@ -28,7 +38,7 @@ export function remember(key: string, value: unknown): void {
 
 function storedSort(): Sort | null {
   try {
-    const raw = localStorage.getItem("futurecast.sort");
+    const raw = localStorage.getItem("deltarisk.sort");
     const value = raw === null ? null : JSON.parse(raw);
     return isSort(value) ? value : null;
   } catch {
@@ -38,9 +48,10 @@ function storedSort(): Sort | null {
 
 export const app = $state({
   coins: {} as Record<string, Coin>,
-  window: stored<WindowName>("futurecast.window", WINDOWS, "1h"),
-  stopPct: stored<number>("futurecast.stop", STOPS, 5),
+  window: stored<WindowName>("deltarisk.window", WINDOWS, "1h"),
+  stopPct: stored<number>("deltarisk.stop", STOPS, 5),
   sort: storedSort(),
+  market: null as Market | null, // the add-pair drawer's prices and changes, fetched while it is open
   expanded: {} as Record<string, boolean>,
   connection: "connecting" as Connection,
   catalog: [] as CatalogItem[],
@@ -142,6 +153,26 @@ export async function reloadCoin(symbol: string): Promise<void> {
   }
 }
 
+// The drawer's market board; the server starts it on the first request and stops it when they stop
+export async function loadMarket(): Promise<void> {
+  try {
+    const resp = await fetch("/api/market");
+    if (resp.ok) app.market = await resp.json();
+  } catch (err) {
+    console.error("Failed to load market data:", err);
+  }
+}
+
+export const BOARD_WINDOWS: BoardWindow[] = ["5m", "15m", "1h", "4h", "24h"];
+export const boardPrefs = $state({
+  window: stored<BoardWindow>("deltarisk.board.window", BOARD_WINDOWS, "24h"),
+});
+
+export function selectBoardWindow(name: BoardWindow): void {
+  boardPrefs.window = name;
+  remember("deltarisk.board.window", name);
+}
+
 // Tier and leverage overrides; null goes back to the automatic one
 export async function updateCoin(symbol: string, settings: { tier?: Tier | null; leverage?: number | null }): Promise<void> {
   try {
@@ -164,18 +195,18 @@ export async function updateCoin(symbol: string, settings: { tier?: Tier | null;
 
 export function selectWindow(name: WindowName): void {
   app.window = name;
-  remember("futurecast.window", name);
+  remember("deltarisk.window", name);
 }
 
 // A click on a sortable column head: its first direction, the other, then the added order
 export function sortBy(key: SortKey): void {
   app.sort = nextSort(app.sort, key);
-  remember("futurecast.sort", app.sort);
+  remember("deltarisk.sort", app.sort);
 }
 
 export function selectStop(stop: number): void {
   app.stopPct = stop;
-  remember("futurecast.stop", stop);
+  remember("deltarisk.stop", stop);
 }
 
 export async function removeCoin(symbol: string): Promise<void> {

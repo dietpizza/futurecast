@@ -27,10 +27,10 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
-from futurecast.features.setups import SetupSpec, close_times, find_setups
-from futurecast.features.wedges import WedgeSpec, find_wedge_setups
-from futurecast.labels.setups import break_even, setup_outcomes, target_key, target_multiples
-from futurecast.labels.wedges import wedge_outcomes
+from deltarisk.features.setups import SetupSpec, close_times, find_setups
+from deltarisk.features.wedges import WedgeSpec, find_wedge_setups
+from deltarisk.labels.setups import break_even, setup_outcomes, target_key, target_multiples
+from deltarisk.labels.wedges import wedge_outcomes
 
 
 @dataclass(frozen=True)

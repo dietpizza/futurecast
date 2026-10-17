@@ -7,11 +7,11 @@ import httpx
 import pandas as pd
 import pytest
 
-from futurecast.config import load_config
-from futurecast.ingestion import binance
-from futurecast.ingestion.binance import BinancePublicClient, interval_to_ms
-from futurecast.ingestion.factory import resolve_benchmark
-from futurecast.publisher.multi_manager import CHART_MINUTES, SymbolWorker
+from deltarisk.config import load_config
+from deltarisk.ingestion import binance
+from deltarisk.ingestion.binance import BinancePublicClient, interval_to_ms
+from deltarisk.ingestion.factory import resolve_benchmark
+from deltarisk.publisher.multi_manager import CHART_MINUTES, SymbolWorker
 
 MINUTE, HOUR, DAY = 60_000, 3_600_000, 86_400_000
 SETTLE = 1_700_006_400_000  # a real 8h BTCUSDT funding settlement (16:00 UTC)
@@ -135,7 +135,7 @@ def test_funding_rates_page_forward_and_reuse_downloads(clock) -> None:
 
 
 def test_funding_downloads_survive_a_restart(clock, tmp_path) -> None:
-    from futurecast.ingestion.cache import FundingCache
+    from deltarisk.ingestion.cache import FundingCache
 
     fake = FakeBinance(clock, funding_hours=1)
     start = NOW - 50 * DAY

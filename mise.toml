@@ -3,8 +3,8 @@ node = "24"
 
 [env]
 # Development ports: the page (vite) and the backend it proxies /api and /ws to
-FUTURECAST_WEB_PORT = "{{ get_env(name='FUTURECAST_WEB_PORT', default='5000') }}"
-FUTURECAST_API_PORT = "{{ get_env(name='FUTURECAST_API_PORT', default='5001') }}"
+DELTARISK_WEB_PORT = "{{ get_env(name='DELTARISK_WEB_PORT', default='5000') }}"
+DELTARISK_API_PORT = "{{ get_env(name='DELTARISK_API_PORT', default='5001') }}"
 
 [tasks.install]
 description = "Install the Python and frontend dependencies"
@@ -24,7 +24,7 @@ depends = ["dev:api", "dev:web"]
 
 [tasks."dev:api"]
 description = "FastAPI backend only (extra arguments pass through, e.g. --offline)"
-run = "uv run futurecast --host 127.0.0.1 --port $FUTURECAST_API_PORT"
+run = "uv run deltarisk --host 127.0.0.1 --port $DELTARISK_API_PORT"
 
 [tasks."dev:web"]
 description = "Svelte dev server only, proxying /api and /ws to the backend"

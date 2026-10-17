@@ -11,7 +11,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from futurecast.paths import resolve
+from deltarisk.paths import resolve
 
 logger = logging.getLogger(__name__)
 

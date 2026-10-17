@@ -6,9 +6,9 @@ import httpx
 import pandas as pd
 import pytest
 
-from futurecast.ingestion import binance
-from futurecast.ingestion.binance import BinanceMarket, BinancePublicClient, binance_candidates
-from futurecast.ingestion.cache import CandleCache
+from deltarisk.ingestion import binance
+from deltarisk.ingestion.binance import BinanceMarket, BinancePublicClient, binance_candidates
+from deltarisk.ingestion.cache import CandleCache
 
 STEP = 300_000  # 5m
 NOW = 1_700_000_000_000 // STEP * STEP + 120_000  # two minutes into a 5m candle

@@ -1,4 +1,7 @@
-# futurecast ⚡
+# DeltaRisk
+
+Formerly FutureCast: an old `~/.futurecast` folder is moved to `~/.deltarisk` on first start, and
+`FUTURECAST_HOME` still works.
 
 A local, read-only **web dashboard for CoinDCX futures** that answers one question for intraday
 trading: *if I open a long or a short on this coin right now, how badly can it hurt me before I close it?*
@@ -14,8 +17,8 @@ For every coin you add, at eight holding windows (5m · 15m · 30m · 1h · 2h �
   quiet / wild): rules describing what has happened, not forecasts;
 - **volatility** (calm / normal / high / wild) and the **funding rate** (crowded longs or shorts).
 
-The `futurecast risk` command prints the models' walk-forward check and today's readings for a coin.
-The `futurecast backtest` command replays two rule-based setups (fair-value-gap setups and wedge
+The `deltarisk risk` command prints the models' walk-forward check and today's readings for a coin.
+The `deltarisk backtest` command replays two rule-based setups (fair-value-gap setups and wedge
 breakouts) on history. They are not on the dashboard.
 
 > It only reads public market data: there are no exchange keys and no code that places orders.
@@ -52,7 +55,7 @@ breakouts) on history. They are not on the dashboard.
 ## Risk readings
 
 Windows 5m–1h use 5-minute candles (90 days of history), 2h–4h 15-minute candles (180 days), 8h hourly
-candles (2 years). Everything is computed on closed candles, in `src/futurecast/stats/risk.py` and
+candles (2 years). Everything is computed on closed candles, in `src/deltarisk/stats/risk.py` and
 `stats/regime.py`.
 
 - **Adverse move:** for a long, how far the lowest low of the next window fell below the entry close;
@@ -72,8 +75,8 @@ candles (2 years). Everything is computed on closed candles, in `src/futurecast/
   the page shows "—" instead of a number. Models are retrained once a day.
 
 ```bash
-uv run futurecast risk B-SOL_USDT                       # every window, −5% stop, the tier's leverage
-uv run futurecast risk B-ETH_USDT --window 1h --stop 8 --leverage 10 --calibration
+uv run deltarisk risk B-SOL_USDT                       # every window, −5% stop, the tier's leverage
+uv run deltarisk risk B-ETH_USDT --window 1h --stop 8 --leverage 10 --calibration
 ```
 
 Results on 17 October 2026 (ETH, SOL, DASH, ZK, BTC; −5% stop at the tier's leverage): the baseline's
@@ -105,8 +108,8 @@ breaks and gaps use only candles that have closed.
 ## Backtest
 
 ```bash
-uv run futurecast backtest B-ETH_USDT                                  # 15m / 1h, 2 years, A+, 3R, 1% risk
-uv run futurecast backtest B-BTC_USDT --entry 5m --context 1h --days 365 --target 4 --csv trades.csv
+uv run deltarisk backtest B-ETH_USDT                                  # 15m / 1h, 2 years, A+, 3R, 1% risk
+uv run deltarisk backtest B-BTC_USDT --entry 5m --context 1h --days 365 --target 4 --csv trades.csv
 ```
 
 It replays every setup with what its orders really did, as one account: A+ setups only, one at a time
@@ -142,8 +145,8 @@ has no clear edge, and none of these results is large enough to trust over 170�
 ### Wedge breakouts (second strategy, backtest only)
 
 ```bash
-uv run futurecast backtest B-ETH_USDT --strategy wedge                 # 1h, 2 years, A+, 2R, 1% risk, at most 5x
-uv run futurecast backtest B-SOL_USDT --strategy wedge --entry 4h --days 2190 --target measured --grade all
+uv run deltarisk backtest B-ETH_USDT --strategy wedge                 # 1h, 2 years, A+, 2R, 1% risk, at most 5x
+uv run deltarisk backtest B-SOL_USDT --strategy wedge --entry 4h --days 2190 --target measured --grade all
 ```
 
 A second rule set on a single chart, not shown on the dashboard. A wedge is two converging lines, one
@@ -182,17 +185,17 @@ edge either.
 That starts the dashboard on port 8000 on every network interface: open **http://127.0.0.1:8000**
 on the same machine, or the machine's IP from elsewhere. The dashboard has no login, so anyone who
 can reach the port can add and remove coins; firewall the port or pass `--host 127.0.0.1`
-to keep it local. `./run.sh` is a thin wrapper around the `futurecast` command, so these are
+to keep it local. `./run.sh` is a thin wrapper around the `deltarisk` command, so these are
 equivalent:
 
 ```bash
-uv run futurecast                    # same as ./run.sh
-uv run futurecast --port 8002        # or: PORT=8002 ./run.sh
-uv run futurecast --host 127.0.0.1   # this machine only
-uv run futurecast --offline          # simulated random-walk candles, no network
+uv run deltarisk                    # same as ./run.sh
+uv run deltarisk --port 8002        # or: PORT=8002 ./run.sh
+uv run deltarisk --host 127.0.0.1   # this machine only
+uv run deltarisk --offline          # simulated random-walk candles, no network
 ```
 
-`futurecast web` is still accepted and does the same thing.
+`deltarisk web` is still accepted and does the same thing.
 
 The page itself is a Svelte + Tailwind app in `web/`, which needs Node (24, pinned in `mise.toml`).
 `./run.sh` builds it into `web/dist` the first time; after changing it, rebuild with `mise run build`.
@@ -210,10 +213,12 @@ cached candles and saved models make every coin ready in seconds; from then on e
 rescored. Pick the window and your stop at the top; open a row for every window and to change the
 coin's tier or leverage. All market data comes from the Binance perpetual
 behind the pair (`B-SOL_USDT` → `SOLUSDT`, `B-1000PEPE_USDT` → `1000PEPEUSDT`, INR pairs → their
-`USDT` perpetual, priced in USDT). The add-coin search lists every Binance crypto and commodity
-perpetual under its CoinDCX name; CoinDCX itself is never called.
+`USDT` perpetual, priced in USDT). The add-pair drawer lists every Binance crypto and commodity
+perpetual under its CoinDCX name, like CoinDCX's futures list: last price, change over 5m, 15m, 1h, 4h or
+24h and 24h volume, sortable, searchable and filtered by sector. CoinDCX itself is never called, so
+prices are the Binance perpetual's (no INR column or CoinDCX leverage badge).
 
-Everything the app keeps lives in `~/.futurecast` (set `FUTURECAST_HOME` to use another folder):
+Everything the app keeps lives in `~/.deltarisk` (set `DELTARISK_HOME` to use another folder):
 
 | Path | Contents |
 |---|---|

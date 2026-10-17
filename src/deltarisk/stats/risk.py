@@ -48,9 +48,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from futurecast.ingestion.factory import extract_base_and_quote, get_symbol_sector
-from futurecast.features.setups import SetupSpec
-from futurecast.stats.regime import RegimeSpec, Window, regime_frame, trend_record
+from deltarisk.ingestion.factory import extract_base_and_quote, get_symbol_sector
+from deltarisk.features.setups import SetupSpec
+from deltarisk.stats.regime import RegimeSpec, Window, regime_frame, trend_record
 
 logger = logging.getLogger(__name__)
 
@@ -615,7 +615,7 @@ class CoinRisk:
               progress: Optional[Any] = None) -> "CoinRisk":
         """Check and fit every window the candles allow. `stop` and `liquidation` (price
         fractions) only shape the check's stop-hit diagnostics; `progress(window, step, steps)`."""
-        from futurecast.stats.regime import WINDOWS
+        from deltarisk.stats.regime import WINDOWS
 
         windows: Dict[str, WindowState] = {}
         for i, window in enumerate(WINDOWS, start=1):
@@ -636,7 +636,7 @@ class CoinRisk:
 
     def score(self, candles: Dict[str, pd.DataFrame], intervals: Optional[List[str]] = None) -> None:
         """Predict at the latest close of the windows on `intervals` (default every chart)."""
-        from futurecast.stats.regime import WINDOW_BY_NAME
+        from deltarisk.stats.regime import WINDOW_BY_NAME
 
         for name, state in self.windows.items():
             window = WINDOW_BY_NAME[name]

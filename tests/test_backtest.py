@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from futurecast import cli
-from futurecast.backtest import BacktestConfig, format_report, run_backtest
-from futurecast.features.setups import SetupSpec
+from deltarisk import cli
+from deltarisk.backtest import BacktestConfig, format_report, run_backtest
+from deltarisk.features.setups import SetupSpec
 
 # Round trip on a 1% stop: a win 0.04R (maker both ways), a stop 0.10R (maker, then taker + slippage)
 SPEC = SetupSpec(ltf_minutes=1, htf_minutes=15, targets=(3.0,), maker_bps=2.0, taker_bps=5.0, slippage_bps=3.0)
@@ -123,7 +123,7 @@ class _FakeClient:
 
 
 def test_backtest_command(monkeypatch, capsys, tmp_path):
-    from futurecast.publisher import multi_manager
+    from deltarisk.publisher import multi_manager
 
     monkeypatch.setattr(multi_manager, "_binance_client", lambda assets: _FakeClient())
     csv = tmp_path / "trades.csv"
@@ -139,7 +139,7 @@ def test_backtest_command(monkeypatch, capsys, tmp_path):
 
 
 def test_wedge_backtest_command(monkeypatch, capsys, tmp_path):
-    from futurecast.publisher import multi_manager
+    from deltarisk.publisher import multi_manager
 
     monkeypatch.setattr(multi_manager, "_binance_client", lambda assets: _FakeClient())
     csv = tmp_path / "trades.csv"
