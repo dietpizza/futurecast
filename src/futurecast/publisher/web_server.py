@@ -53,7 +53,7 @@ def create_app(
     persistence_path: Optional[str | Path] = "tracked_symbols.json",
     web_dist: Path = WEB_DIST,
 ) -> FastAPI:
-    """Create and configure the FastAPI web application (load_config refuses any config that could trade).
+    """Create and configure the FastAPI web application.
 
     The page is served from `web_dist` (the frontend's build output); without a build, / says how to make one.
     """
@@ -182,6 +182,5 @@ def run_web_server(host: str = "0.0.0.0", port: int = 8000, live: bool = True) -
     """Launch the Web UI server."""
     app = create_app(live_mode=live)
     shown = "127.0.0.1" if host in ("0.0.0.0", "::") else host  # a wildcard bind is not a browsable address
-    print(f"\n⚡ FutureCast Web UI running at: http://{shown}:{port} (listening on {host})")
-    print("🛡️  Safety: STRICTLY ZERO ORDER EXECUTION\n")
+    print(f"\n⚡ FutureCast Web UI running at: http://{shown}:{port} (listening on {host})\n")
     uvicorn.run(app, host=host, port=port, log_level="warning")

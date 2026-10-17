@@ -17,7 +17,7 @@ price momentum. No models are trained. For every coin you add, at four horizons 
 The `futurecast backtest` command also replays two rule-based setups (fair-value-gap setups and wedge
 breakouts) on history. They are not on the dashboard.
 
-> **Zero-Execution Security Guarantee**: This system is read-only. It contains zero exchange trading credentials, zero order routing routines, and zero signing methods, preventing live trade execution or capital risk under any condition. `AppConfig.enforce_zero_execution_policy()` refuses to start otherwise.
+> It only reads public market data: there are no exchange keys and no code that places orders.
 
 ---
 
@@ -205,7 +205,7 @@ Everything the app keeps lives in `~/.futurecast` (set `FUTURECAST_HOME` to use 
 |---|---|
 | `tracked_symbols.json` | Coins on the dashboard |
 | `cache/candles/` | Downloaded closed candles, so restarts and backtests only fetch new ones |
-| `config/*.yaml` | Optional overrides (`assets.yaml`, `safety.yaml`); any file left out uses the defaults shown in this repo's `config/` |
+| `config/assets.yaml` | Optional overrides of the defaults shown in this repo's `config/` |
 
 Older versions also kept `models/` and `logs/forecasts/` there; nothing reads them any more, so they
 can be deleted.

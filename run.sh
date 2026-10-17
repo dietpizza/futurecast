@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # futurecast: start the CoinDCX futures web dashboard
-# Safety: READ-ONLY (Zero Trade Execution)
 #
 #   ./run.sh                    port 8000 on every interface  (PORT=9000 ./run.sh to change)
 #   ./run.sh --port 8002        any `futurecast --help` option is passed through
