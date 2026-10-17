@@ -183,6 +183,15 @@ uv run futurecast --offline          # simulated random-walk candles, no network
 
 `futurecast web` is still accepted and does the same thing.
 
+The page itself is a Svelte + Tailwind app in `web/`, which needs Node (24, pinned in `mise.toml`).
+`./run.sh` builds it into `web/dist` the first time; after changing it, rebuild with `mise run build`.
+While working on it, run both halves with hot reload:
+
+```bash
+mise dev            # page on http://localhost:5000, backend on 127.0.0.1:5001
+mise tasks          # build, check, test, dev:api, dev:web, start, install
+```
+
 In the dashboard, add any CoinDCX futures pair (e.g. `B-DOGE_USDT`, `B-SOL_USDT`). A new coin's
 history downloads in the background, one coin at a time (the card shows the progress); from then on
 each candle is appended as it closes. All market data comes from the Binance perpetual

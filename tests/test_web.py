@@ -16,51 +16,38 @@ def test_app(tmp_path):
     return app
 
 
-def test_web_index_page(test_app):
-    with TestClient(test_app) as client:
-        response = client.get("/")
-        assert response.status_code == 200
-        assert "FutureCast" in response.text
-        # Verify tooltips and beginner-friendly descriptions
-        assert "global-tooltip" in response.text
-        assert "data-tooltip" in response.text
-        assert "data-tooltip-title" in response.text
-        assert "Variance ratio" in response.text
-        # The horizon selector offers every horizon the server computes
-        for horizon in ("1h", "4h", "1d", "3d"):
-            assert f"data-tf=\"{horizon}\"" in response.text
-        # Nothing of the removed models is left on the page
-        for gone in ("Residual Alpha", "models-table", "LightGBM", "XGBoost", "Risk L / S", "Win chance"):
-            assert gone not in response.text
-        # Glossary footer
-        assert "plain-english-glossary" in response.text
-        assert "The \"Not a Finance-Bro\" Cheat Sheet" in response.text
+def test_web_serves_the_built_page(tmp_path):
+    """/ serves web/dist/index.html (revalidated on every load); hashed assets may be cached for good."""
+    dist = tmp_path / "dist"
+    (dist / "assets").mkdir(parents=True)
+    (dist / "index.html").write_text('<title>FutureCast</title><script src="/assets/index-abc.js"></script>')
+    (dist / "assets" / "index-abc.js").write_text("console.log(1)")
+    (dist / "favicon.svg").write_text("<svg/>")
+    app = create_app(initial_symbols=[], live_mode=False, persistence_path=tmp_path / "t.json", web_dist=dist)
+    with TestClient(app) as client:
+        page = client.get("/")
+        assert page.status_code == 200
+        assert "FutureCast" in page.text
+        assert page.headers["cache-control"] == "no-cache"
 
-        # Verify CoinDCX Futures Search Sidebar elements
-        assert "coindcx-sidebar" in response.text
-        assert "sidebar-search-input" in response.text
-        assert "sidebar-toggle-btn" in response.text
+        asset = client.get("/assets/index-abc.js")
+        assert asset.status_code == 200
+        assert "immutable" in asset.headers["cache-control"]
+        assert client.get("/assets/missing.js").status_code == 404
 
-        # Verify global light/dark theme toggle
-        assert 'id="theme-toggle"' in response.text
-        assert "/static/js/theme.js" in response.text
+        icon = client.get("/favicon.svg")
+        assert icon.status_code == 200
+        assert icon.headers["cache-control"] == "no-cache"
 
-        # Verify modular CSS and JS static files are served
-        for asset in [
-            "/static/css/main.css",
-            "/static/css/tooltips.css",
-            "/static/css/glossary.css",
-            "/static/css/sidebar.css",
-            "/static/js/theme.js",
-            "/static/js/tooltips.js",
-            "/static/js/timeframe.js",
-            "/static/js/app.js",
-            "/static/js/sidebar.js",
-        ]:
-            asset_resp = client.get(asset)
-            assert asset_resp.status_code == 200, f"Static asset {asset} failed to load"
-            # Browsers must revalidate so edited CSS/JS is never served stale
-            assert asset_resp.headers.get("cache-control") == "no-cache", f"{asset} missing no-cache"
+
+def test_web_without_a_build_says_how_to_make_one(tmp_path):
+    app = create_app(initial_symbols=[], live_mode=False, persistence_path=tmp_path / "t.json",
+                     web_dist=tmp_path / "missing")
+    with TestClient(app) as client:
+        page = client.get("/")
+        assert page.status_code == 503
+        assert "mise run build" in page.text
+        assert client.get("/api/coins").status_code == 200
 
 
 def test_api_coindcx_futures_catalog(test_app):

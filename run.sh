@@ -27,4 +27,13 @@ else
     exit 1
 fi
 
+# The page is the Svelte build in web/dist; make it once if it's missing (`mise run build` rebuilds it)
+if [ ! -f web/dist/index.html ]; then
+    if command -v npm >/dev/null 2>&1; then
+        (cd web && npm install && npm run build)
+    else
+        echo -e "\033[1;33mWarning: web/dist is missing and npm isn't installed: the API runs, the page doesn't.\033[0m"
+    fi
+fi
+
 exec "${RUNNER[@]}" --port "${PORT:-8000}" "${ARGS[@]+"${ARGS[@]}"}"

@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 import uvicorn
 
@@ -22,22 +22,24 @@ from futurecast.publisher.multi_manager import MultiCoinStreamManager
 
 logger = logging.getLogger(__name__)
 
-WEB_DIR = Path(__file__).parent / "web"
-HTML_PATH = WEB_DIR / "index.html"
-STATIC_DIR = WEB_DIR / "static"
+# The Svelte page, built by `mise run build` (vite) into web/dist at the repository root
+WEB_DIST = Path(__file__).resolve().parents[3] / "web" / "dist"
+
+NOT_BUILT = """<!DOCTYPE html><meta charset="utf-8"><title>FutureCast</title>
+<body style="font-family: sans-serif; max-width: 40em; margin: 4em auto; line-height: 1.5">
+<h1>FutureCast</h1>
+<p>The dashboard hasn't been built. Run <code>mise run build</code> and reload, or use <code>mise dev</code>
+for the development server (it serves the page on port 5000).</p>
+<p>The API is up: <a href="/api/coins">/api/coins</a>.</p>"""
 
 
-class RevalidatingStaticFiles(StaticFiles):
-    """Static files the browser must revalidate on every load (cheap 304 via ETag).
-
-    Without an explicit Cache-Control, browsers heuristically cache assets based on
-    their Last-Modified age, so an older stylesheet can be served stale alongside
-    freshly edited ones and break the UI.
-    """
+class BuiltAssets(StaticFiles):
+    """Vite's hashed assets: a changed file gets a new name, so the browser may keep each one for good."""
 
     async def get_response(self, path: str, scope: Any) -> Any:
         response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-cache"
+        if response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
 
 
@@ -49,8 +51,12 @@ def create_app(
     initial_symbols: Optional[List[str]] = None,
     live_mode: bool = True,
     persistence_path: Optional[str | Path] = "tracked_symbols.json",
+    web_dist: Path = WEB_DIST,
 ) -> FastAPI:
-    """Create and configure the FastAPI web application (load_config refuses any config that could trade)."""
+    """Create and configure the FastAPI web application (load_config refuses any config that could trade).
+
+    The page is served from `web_dist` (the frontend's build output); without a build, / says how to make one.
+    """
     manager = MultiCoinStreamManager(config=load_config(), persistence_path=persistence_path, live=live_mode)
 
     @asynccontextmanager
@@ -86,11 +92,22 @@ def create_app(
     )
     app.state.manager = manager
 
-    app.mount("/static", RevalidatingStaticFiles(directory=STATIC_DIR), name="static")
+    # index.html and favicon.svg are revalidated on every load, so a new build shows on reload
+    app.mount("/assets", BuiltAssets(directory=web_dist / "assets", check_dir=False), name="assets")
 
     @app.get("/", response_class=HTMLResponse)
-    async def get_index() -> HTMLResponse:
-        return HTMLResponse(HTML_PATH.read_text(encoding="utf-8"), headers={"Cache-Control": "no-cache"})
+    async def get_index() -> Any:
+        index = web_dist / "index.html"
+        if not index.is_file():
+            return HTMLResponse(NOT_BUILT, status_code=503)
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def get_favicon() -> FileResponse:
+        icon = web_dist / "favicon.svg"
+        if not icon.is_file():
+            raise HTTPException(status_code=404)
+        return FileResponse(icon, headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/coins")
     async def get_coins() -> List[Dict[str, Any]]:
