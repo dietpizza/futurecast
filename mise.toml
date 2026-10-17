@@ -1,5 +1,6 @@
 [tools]
 node = "24"
+go = "1.25"
 
 [env]
 # Development ports: the page (vite) and the backend it proxies /api and /ws to

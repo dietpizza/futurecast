@@ -1,0 +1,48 @@
+{
+ "symbol": "B-ETH_USDT",
+ "benchmark": "B-BTC_USDT",
+ "end_ms": 1792267200000,
+ "days": {
+  "5m": 20,
+  "15m": 40,
+  "1h": 120
+ },
+ "spans": {
+  "ETHUSDT_5m": {
+   "covered_from": 1790539200000,
+   "covered_to": 1792266900000,
+   "rows": 5760
+  },
+  "ETHUSDT_15m": {
+   "covered_from": 1788811200000,
+   "covered_to": 1792266300000,
+   "rows": 3840
+  },
+  "ETHUSDT_1h": {
+   "covered_from": 1781899200000,
+   "covered_to": 1792263600000,
+   "rows": 2880
+  },
+  "BTCUSDT_5m": {
+   "covered_from": 1790539200000,
+   "covered_to": 1792266900000,
+   "rows": 5760
+  },
+  "BTCUSDT_15m": {
+   "covered_from": 1788811200000,
+   "covered_to": 1792266300000,
+   "rows": 3840
+  },
+  "BTCUSDT_1h": {
+   "covered_from": 1781899200000,
+   "covered_to": 1792263600000,
+   "rows": 2880
+  },
+  "funding_ETHUSDT": {
+   "covered_from": 1781568000000,
+   "fetched_at": 1792267200000,
+   "rows": 372,
+   "source_fetched_at": 1792267973329
+  }
+ }
+}
