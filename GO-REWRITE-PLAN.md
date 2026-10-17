@@ -3,7 +3,8 @@
 Written 2026-10-18 at the user's request. Phase 0 done 2026-10-18 (fixtures: ETH/BTC, 5m 20 days, 15m 40, 1h 120
 ending 2026-10-17 20:00 UTC, 10.5 MB; `internal/testdata/parity/inputs.json` has the spans). Phases 1–2 done 2026-10-18; phase 2 added
 `internal/pq` (the Parquet reader/writer behind the caches and the parity tests) and `internal/binance/binancetest`
-(the fake Binance server and clock). Read `CLAUDE.md` first; this file only says what
+(the fake Binance server and clock). Phase 3 done 2026-10-18: `internal/series`, `regime`, `funding`, `risk`,
+`jsonx` (NaN/label/timestamp JSON), `history` (chart sizes, cached client, aligned downloads) and `cmd/deltarisk risk`. Read `CLAUDE.md` first; this file only says what
 changes and in what order.
 
 ## Goal
@@ -92,7 +93,15 @@ These are where a port drifts silently. Each gets a helper in `internal/series` 
 - `np.quantile` default (linear interpolation) for the baseline's quantiles and `PAGE_ALPHAS`.
 - `np.searchsorted(side="left")` in the baseline's stop-hit chance.
 - `merge_asof(direction="backward")` on close times for funding inputs.
-- `.where(cond, other)` / `.clip` NaN handling: a NaN condition keeps NaN, `clip` leaves NaN alone.
+- `.where(cond, other)` / `.clip` NaN handling: a comparison with NaN is false, so `.where(path > 0, 0.0)` puts
+  0.0 (not NaN) where path is NaN; `clip` leaves NaN alone. (This line first said the opposite; the fixtures settled it.)
+- pandas 3's rolling variance is Welford with Kahan compensation that recomputes the window when an update loses
+  too many digits (ε × 1e3), with no repeated-value shortcut (sum and mean keep theirs). EWM uses α = 1 / (1 + com),
+  com = (span − 1) / 2, a special update for com = 1, and its multiply-add is fused (FMA) in pandas' arm64 build.
+- Go may fuse `a*b + c` into one FMA instruction on arm64, even across statements, which rounds differently from
+  numpy. Wrap a product in `float64(...)` where exact parity matters (numpy's quantile index and interpolation).
+- `internal/testdata/parity/series.json` holds pandas' answers for every helper on awkward inputs (NaN runs, ties,
+  flat stretches); `internal/series` matches them exactly except std (1e-9).
 - Times: everything in int64 milliseconds (open times), close = open + interval. The pandas 3 µs/ns issue
   goes away.
 - JSON: NaN and ±Inf become `null`, as the Python snapshot code does today.

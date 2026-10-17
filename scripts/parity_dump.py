@@ -136,6 +136,42 @@ def offline_client() -> BinancePublicClient:
     return client
 
 
+# ───────── pandas and numpy helpers on awkward inputs ─────────
+
+def series_cases() -> Dict[str, Any]:
+    """internal/series test vectors: rolling windows, ranks, EWM, quantiles on data with NaN runs,
+    ties, constant stretches and tiny and huge values."""
+    rng = np.random.default_rng(5)
+    walk = np.cumsum(rng.normal(0, 1, 400)) * 1e-3
+    walk[[17, 18, 19, 120, 300]] = np.nan
+    ties = np.round(rng.normal(0, 1, 300), 1)
+    ties[[5, 50, 51]] = np.nan
+    flat = np.r_[np.full(40, 0.25), rng.normal(0, 1e-8, 40) + 7.0, np.full(30, -3.0), rng.normal(0, 1, 40) * 1e6]
+    returns = np.diff(np.log(100 * np.exp(np.cumsum(rng.normal(0, 0.002, 600)))))
+    inputs = {"walk": walk, "ties": ties, "flat": flat, "returns": np.r_[np.nan, returns]}
+    out: Dict[str, Any] = {"inputs": inputs, "rolling": [], "ewm": [], "quantile": [], "reduce": []}
+    for name, x in inputs.items():
+        s = pd.Series(x)
+        for n, minp in ((1, None), (3, None), (12, None), (50, None), (50, 10), (200, 20)):
+            r = s.rolling(n, min_periods=minp)
+            case = {"input": name, "n": n, "min_periods": minp or 0,
+                    "sum": r.sum(), "mean": r.mean(), "std": r.std(), "rank_pct": r.rank(pct=True)}
+            if minp is None:
+                case.update({"min": r.min(), "max": r.max()})
+            out["rolling"].append({k: (v.to_numpy() if isinstance(v, pd.Series) else v) for k, v in case.items()})
+        for span in (3, 12, 36):
+            out["ewm"].append({"input": name, "span": span, "mean": s.ewm(span=span, adjust=False).mean().to_numpy()})
+        clean = np.sort(x[np.isfinite(x)])
+        for size in (1, 2, 7, len(clean)):
+            part = np.sort(clean[:size])
+            qs = [0.0, 0.02, 0.25, 0.5, 0.75, 0.9, 0.97, 0.999, 1.0]
+            out["quantile"].append({"input": name, "size": size, "q": qs, "value": [float(np.quantile(part, q)) for q in qs],
+                                    "median": float(np.median(part)), "mean": float(np.mean(part)),
+                                    "search": [[float(v), int(np.searchsorted(part, v, side="left"))]
+                                               for v in (part[0], part[-1], float(np.mean(part)), -1e9, 1e9)]})
+    return out
+
+
 # ───────── outputs ─────────
 
 def main() -> None:
@@ -249,6 +285,7 @@ def main() -> None:
     })
     print(f"  wedge: {len(setups)} setups, {result['summary']['trades']} trades")
 
+    write_json("series.json", series_cases())
     write_json("inputs.json", {"symbol": SYMBOL, "benchmark": benchmark, "end_ms": END_MS, "days": DAYS,
                                "spans": spans})
     client.close()

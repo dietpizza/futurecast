@@ -5,6 +5,13 @@ go 1.25.5
 require gopkg.in/yaml.v3 v3.0.1
 
 require (
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/spf13/cobra v1.10.2 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
+	gonum.org/v1/gonum v0.17.0 // indirect
+)
+
+require (
 	github.com/andybalholm/brotli v1.2.3 // indirect
 	github.com/apache/arrow-go/v18 v18.8.0
 	github.com/apache/thrift v0.24.0 // indirect
