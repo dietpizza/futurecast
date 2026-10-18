@@ -228,7 +228,7 @@ func Write(path string, cols []Column, meta map[string]string) error {
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmp.Name()) // no-op once renamed
+	defer os.Remove(tmp.Name())              // no-op once renamed
 	if err := tmp.Chmod(0o644); err != nil { // CreateTemp makes 0600; the caches were 0644 under Python
 		tmp.Close()
 		return err

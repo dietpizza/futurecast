@@ -1,12 +1,3 @@
-# Python (until the Python code is deleted, GO-REWRITE-PLAN.md phase 9)
-__pycache__/
-*.py[oc]
-build/
-wheels/
-*.egg-info
-.venv
-.pytest_cache/
-
 # Build output: the page (web/dist) and the Go binary
 dist/
 bin/
