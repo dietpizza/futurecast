@@ -20,12 +20,12 @@ sources = ["package.json", "package-lock.json"]
 outputs = ["node_modules/.package-lock.json"]
 
 [tasks.dev]
-description = "Svelte dev server on http://localhost:5000 (hot reload) and the backend on :5001"
+description = "Svelte dev server on http://127.0.0.1:5000 (hot reload) and the backend on 127.0.0.1:5001"
 depends = ["dev:api", "dev:web"]
 
 [tasks."dev:api"]
-description = "Go backend only (extra arguments pass through, e.g. --offline)"
-run = "go run ./cmd/deltarisk --host 127.0.0.1 --port $DELTARISK_API_PORT"
+description = "Go backend only, on :5001; its / redirects to the page on :5000 (extra arguments pass through, e.g. --offline)"
+run = "go run ./cmd/deltarisk --host 127.0.0.1 --port $DELTARISK_API_PORT --page-url http://127.0.0.1:$DELTARISK_WEB_PORT"
 
 [tasks."dev:web"]
 description = "Svelte dev server only, proxying /api and /ws to the backend"

@@ -173,6 +173,31 @@ func TestServesAnEmbeddedPage(t *testing.T) {
 	}
 }
 
+// In mise dev the page comes from Vite on :5000: the backend's page routes send the browser there.
+func TestPageURLRedirectsThePageToTheDevServer(t *testing.T) {
+	tempHome(t)
+	s := New(Options{Config: config.Default(), InitialSymbols: []string{}, PersistPath: "-", PageURL: "http://127.0.0.1:5000/",
+		Page: fstest.MapFS{"index.html": {Data: []byte("stale build")}}, Catalog: offlineCatalog{}, Poll: time.Hour})
+	s.Start()
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(func() { ts.Close(); s.Stop() })
+	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	for path, want := range map[string]string{"/": "http://127.0.0.1:5000/", "/assets/a.js?v=1": "http://127.0.0.1:5000/assets/a.js?v=1",
+		"/favicon.svg": "http://127.0.0.1:5000/favicon.svg"} {
+		resp, err := noFollow.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusTemporaryRedirect || resp.Header.Get("Location") != want {
+			t.Fatal(path, resp.StatusCode, resp.Header.Get("Location"))
+		}
+	}
+	if resp, _ := call(t, "GET", ts.URL+"/api/coins", nil); resp.StatusCode != 200 {
+		t.Fatal("the API still answers", resp.StatusCode)
+	}
+}
+
 func TestWithoutABuildSaysHowToMakeOne(t *testing.T) {
 	tempHome(t)
 	_, ts := app(t, []string{}, "-", "")

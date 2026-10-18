@@ -202,7 +202,7 @@ only with `-tags embedweb`, which `mise run build` passes after building it).
 While working on the page, run both halves with hot reload:
 
 ```bash
-mise dev            # page on http://localhost:5000, backend on 127.0.0.1:5001
+mise dev            # page on http://127.0.0.1:5000, API on 127.0.0.1:5001 (its / redirects to the page)
 mise tasks          # build, check, test, dev:api, dev:web, start, install
 ```
 

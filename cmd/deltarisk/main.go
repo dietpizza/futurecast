@@ -60,33 +60,38 @@ func pageToServe(webDist string) (fs.FS, string) {
 
 func dashboardCommand(use string) *cobra.Command {
 	var (
-		host, webDist string
-		port          int
-		offline       bool
+		host, webDist, pageURL string
+		port                   int
+		offline                bool
 	)
 	cmd := &cobra.Command{
 		Use:   use,
 		Short: "Start the DeltaRisk web dashboard",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runDashboard(host, port, !offline, webDist)
+			return runDashboard(host, port, !offline, webDist, pageURL)
 		},
 	}
 	f := cmd.Flags()
 	f.StringVar(&host, "host", "0.0.0.0", "Interface to bind the dashboard to (default: every interface)")
 	f.IntVarP(&port, "port", "p", 8000, "Port to serve the dashboard on")
 	f.BoolVar(&offline, "offline", false, "Use simulated candles instead of live Binance data")
+	f.StringVar(&pageURL, "page-url", "", "The page is served elsewhere (the Vite dev server): / redirects there (mise dev passes it)")
 	f.StringVar(&webDist, "web-dist", "", "Serve the built page from this folder (default: the page compiled into the binary, else web/dist)")
 	return cmd
 }
 
-func runDashboard(host string, port int, live bool, webDist string) error {
+func runDashboard(host string, port int, live bool, webDist, pageURL string) error {
 	cfg, err := config.Load("config")
 	if err != nil {
 		return err
 	}
-	page, from := pageToServe(webDist)
-	srv := server.New(server.Options{Config: cfg, Live: live, Page: page})
+	var page fs.FS
+	from := ""
+	if pageURL == "" {
+		page, from = pageToServe(webDist)
+	}
+	srv := server.New(server.Options{Config: cfg, Live: live, Page: page, PageURL: pageURL})
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -98,7 +103,12 @@ func runDashboard(host string, port int, live bool, webDist string) error {
 	if host == "0.0.0.0" || host == "::" { // a wildcard bind is not a browsable address
 		shown = "127.0.0.1"
 	}
-	fmt.Printf("\nΔ DeltaRisk running at: http://%s (listening on %s; page: %s)\n\n", net.JoinHostPort(shown, strconv.Itoa(port)), host, from)
+	at := "http://" + net.JoinHostPort(shown, strconv.Itoa(port))
+	if pageURL != "" {
+		fmt.Printf("\nΔ DeltaRisk API at %s (listening on %s); open the page at %s\n\n", at, host, pageURL)
+	} else {
+		fmt.Printf("\nΔ DeltaRisk running at: %s (listening on %s; page: %s)\n\n", at, host, from)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

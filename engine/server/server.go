@@ -37,7 +37,10 @@ type Options struct {
 	Live           bool
 	PersistPath    string // "tracked_symbols.json" under the home folder by default; "-" keeps nothing
 	Page           fs.FS  // the built page (index.html, favicon.svg, assets/); nil: not built
-	Poll           time.Duration
+	// PageURL, when set, is where the page is served instead (the Vite dev server in `mise dev`):
+	// the page's routes redirect there and Page is ignored.
+	PageURL string
+	Poll    time.Duration
 	// Catalog lists Binance perpetuals for the add-coin search (a 4-second, one-try client by default).
 	Catalog catalog.PerpetualLister
 	// BoardClient makes the market board's client (a client from the config by default).
@@ -130,6 +133,16 @@ func fail(w http.ResponseWriter, status int, detail any) {
 // Handler routes every request.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	if u := strings.TrimRight(s.opts.PageURL, "/"); u != "" {
+		toPage := func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, u+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+		}
+		mux.HandleFunc("GET /{$}", toPage)
+		mux.HandleFunc("GET /favicon.svg", toPage)
+		mux.HandleFunc("GET /assets/{path...}", toPage)
+		s.routes(mux)
+		return mux
+	}
 	page := s.opts.Page
 	isFile := func(name string) bool {
 		if page == nil {
@@ -168,6 +181,12 @@ func (s *Server) Handler() http.Handler {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		http.ServeFileFS(w, r, page, name)
 	})
+	s.routes(mux)
+	return mux
+}
+
+// routes adds the API and the WebSocket.
+func (s *Server) routes(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/coins", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, s.Manager.Snapshots())
@@ -181,7 +200,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/coins/{symbol}", s.updateCoin)
 	mux.HandleFunc("DELETE /api/coins/{symbol}", s.deleteCoin)
 	mux.HandleFunc("GET /ws", s.websocket)
-	return mux
 }
 
 // market is price, 24h volume and the change over 5m … 24h for every catalog pair (the add-pair
