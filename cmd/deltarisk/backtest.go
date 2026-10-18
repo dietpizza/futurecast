@@ -10,12 +10,12 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"deltarisk/internal/backtest"
-	"deltarisk/internal/candles"
-	"deltarisk/internal/config"
-	"deltarisk/internal/history"
-	"deltarisk/internal/setups"
-	"deltarisk/internal/wedges"
+	"deltarisk/engine/backtest"
+	"deltarisk/engine/candles"
+	"deltarisk/engine/config"
+	"deltarisk/engine/history"
+	"deltarisk/engine/setups"
+	"deltarisk/engine/wedges"
 )
 
 type backtestFlags struct {

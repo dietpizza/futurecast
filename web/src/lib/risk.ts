@@ -1,5 +1,5 @@
 // The risk readings in words and numbers: the stop-hit chance for the page's stop, the labels, and the
-// loading states. The math mirrors internal/risk; keep the two in sync.
+// loading states. The math mirrors engine/risk; keep the two in sync.
 
 import { formatNumber, isNum, pct, pctile, sp } from "./format";
 import type { Coin, Side, SideRisk, Tier, WindowName, WindowRisk } from "./types";
@@ -27,7 +27,7 @@ export function windowOf(coin: Coin, name: WindowName): WindowRisk | null {
 }
 
 // P(adverse move ≥ x) from quantiles (ascending): linear from (0, 0) through them, an exponential
-// tail through the last two beyond the last (risk.ExceedChance in internal/risk).
+// tail through the last two beyond the last (risk.ExceedChance in engine/risk).
 export function exceedChance(alphas: number[], moves: number[], x: number): number {
   const n = moves.length;
   if (!n) return NaN;

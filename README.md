@@ -55,8 +55,8 @@ breakouts) on history. They are not on the dashboard.
 ## Risk readings
 
 Windows 5m–1h use 5-minute candles (90 days of history), 2h–4h 15-minute candles (180 days), 8h hourly
-candles (2 years). Everything is computed on closed candles, in `internal/risk` and
-`internal/regime`.
+candles (2 years). Everything is computed on closed candles, in `engine/risk` and
+`engine/regime`.
 
 - **Adverse move:** for a long, how far the lowest low of the next window fell below the entry close;
   for a short, how far the highest high rose above it. Wicks count.

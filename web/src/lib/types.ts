@@ -1,4 +1,4 @@
-// The parts of the server's coin snapshot the page reads (manager.Snapshot in internal/manager/worker.go).
+// The parts of the server's coin snapshot the page reads (manager.Snapshot in engine/manager/worker.go).
 // Readings are null or missing when the history can't support them.
 
 export type WindowName = "5m" | "15m" | "30m" | "1h" | "2h" | "3h" | "4h" | "8h";
@@ -94,7 +94,7 @@ export interface CatalogItem {
   coindcx_url: string;
 }
 
-// The add-pair drawer's market board (GET /api/market, internal/board)
+// The add-pair drawer's market board (GET /api/market, engine/board)
 export type BoardWindow = "5m" | "15m" | "1h" | "4h" | "24h";
 
 export interface MarketCoin {

@@ -9,13 +9,13 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"deltarisk/internal/candles"
-	"deltarisk/internal/catalog"
-	"deltarisk/internal/config"
-	"deltarisk/internal/history"
-	"deltarisk/internal/regime"
-	"deltarisk/internal/risk"
-	"deltarisk/internal/series"
+	"deltarisk/engine/candles"
+	"deltarisk/engine/catalog"
+	"deltarisk/engine/config"
+	"deltarisk/engine/history"
+	"deltarisk/engine/regime"
+	"deltarisk/engine/risk"
+	"deltarisk/engine/series"
 )
 
 func pct(x float64, digits int) string { return fmt.Sprintf("%.*f%%", digits, 100.0*x) }

@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"deltarisk/internal/binance/binancetest"
-	"deltarisk/internal/paths"
+	"deltarisk/engine/binance/binancetest"
+	"deltarisk/engine/paths"
 )
 
 // price is a wavy path with structure on every scale, so the rules find setups.

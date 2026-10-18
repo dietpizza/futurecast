@@ -18,7 +18,8 @@ difference 9e-12; 10 LightGBM sides left out), with the same keys and nulls; `de
 column on BTC, SOL and ZK; the page on the Go server worked through window and stop changes, adding from the drawer,
 reload, a leverage override and removal. Go now writes cache files 0644 like pyarrow did (it wrote 0600).
 Phase 9 done 2026-10-19: the Python code, tests, environment and `scripts/parity_dump.py` are deleted; the rewrite is
-finished. The parity fixtures stay as regression tests. Read `CLAUDE.md` first; this file only says what
+finished. The parity fixtures stay as regression tests.
+On 2026-10-19 the user renamed `internal/` to `engine/`; the paths below are as they were during the rewrite. Read `CLAUDE.md` first; this file only says what
 changes and in what order.
 
 ## Goal

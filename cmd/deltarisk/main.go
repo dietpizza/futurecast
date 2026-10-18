@@ -17,8 +17,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"deltarisk/internal/config"
-	"deltarisk/internal/server"
+	"deltarisk/engine/config"
+	"deltarisk/engine/server"
 )
 
 func main() {
