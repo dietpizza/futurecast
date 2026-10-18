@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"deltarisk"
 	"deltarisk/engine/config"
 	"deltarisk/engine/server"
 )
@@ -34,18 +36,26 @@ func main() {
 	}
 }
 
-// defaultWebDist is web/dist in the working folder, else next to the binary (bin/deltarisk -> web/dist).
-func defaultWebDist() string {
-	if info, err := os.Stat(filepath.Join("web", "dist")); err == nil && info.IsDir() {
-		return filepath.Join("web", "dist")
+// pageToServe is the page the dashboard serves and where it comes from: --web-dist when given,
+// else the page compiled into the binary, else web/dist on disk (in the working folder, or next
+// to the binary: bin/deltarisk -> web/dist). nil when there is none.
+func pageToServe(webDist string) (fs.FS, string) {
+	if webDist != "" {
+		return os.DirFS(webDist), webDist
 	}
+	if page, ok := deltarisk.Page(); ok {
+		return page, "compiled into the binary"
+	}
+	candidates := []string{filepath.Join("web", "dist")}
 	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Join(filepath.Dir(exe), "..", "web", "dist")
-		if info, err := os.Stat(dir); err == nil && info.IsDir() {
-			return dir
+		candidates = append(candidates, filepath.Join(filepath.Dir(exe), "..", "web", "dist"))
+	}
+	for _, dir := range candidates {
+		if info, err := os.Stat(filepath.Join(dir, "index.html")); err == nil && !info.IsDir() {
+			return os.DirFS(dir), dir
 		}
 	}
-	return filepath.Join("web", "dist")
+	return nil, "not built"
 }
 
 func dashboardCommand(use string) *cobra.Command {
@@ -59,9 +69,6 @@ func dashboardCommand(use string) *cobra.Command {
 		Short: "Start the DeltaRisk web dashboard",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if webDist == "" {
-				webDist = defaultWebDist()
-			}
 			return runDashboard(host, port, !offline, webDist)
 		},
 	}
@@ -69,7 +76,7 @@ func dashboardCommand(use string) *cobra.Command {
 	f.StringVar(&host, "host", "0.0.0.0", "Interface to bind the dashboard to (default: every interface)")
 	f.IntVarP(&port, "port", "p", 8000, "Port to serve the dashboard on")
 	f.BoolVar(&offline, "offline", false, "Use simulated candles instead of live Binance data")
-	f.StringVar(&webDist, "web-dist", "", "The built page to serve (default web/dist)")
+	f.StringVar(&webDist, "web-dist", "", "Serve the built page from this folder (default: the page compiled into the binary, else web/dist)")
 	return cmd
 }
 
@@ -78,7 +85,8 @@ func runDashboard(host string, port int, live bool, webDist string) error {
 	if err != nil {
 		return err
 	}
-	srv := server.New(server.Options{Config: cfg, Live: live, WebDist: webDist})
+	page, from := pageToServe(webDist)
+	srv := server.New(server.Options{Config: cfg, Live: live, Page: page})
 	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
@@ -90,7 +98,7 @@ func runDashboard(host string, port int, live bool, webDist string) error {
 	if host == "0.0.0.0" || host == "::" { // a wildcard bind is not a browsable address
 		shown = "127.0.0.1"
 	}
-	fmt.Printf("\nΔ DeltaRisk running at: http://%s (listening on %s)\n\n", net.JoinHostPort(shown, strconv.Itoa(port)), host)
+	fmt.Printf("\nΔ DeltaRisk running at: http://%s (listening on %s; page: %s)\n\n", net.JoinHostPort(shown, strconv.Itoa(port)), host, from)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

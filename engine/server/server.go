@@ -1,5 +1,5 @@
 // Package server is the dashboard's web server: REST for the watchlist and coin settings, /ws for
-// live updates, and the Svelte page built into web/dist.
+// live updates, and the Svelte page (compiled into the binary, or web/dist on disk).
 package server
 
 import (
@@ -9,8 +9,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -24,7 +22,7 @@ import (
 	"deltarisk/engine/manager"
 )
 
-// NotBuilt is the page served when web/dist has no build.
+// NotBuilt is the page served when there is no built page.
 const NotBuilt = `<!DOCTYPE html><meta charset="utf-8"><title>DeltaRisk</title>
 <body style="font-family: sans-serif; max-width: 40em; margin: 4em auto; line-height: 1.5">
 <h1>DeltaRisk</h1>
@@ -38,7 +36,7 @@ type Options struct {
 	InitialSymbols []string // nil: the saved watchlist
 	Live           bool
 	PersistPath    string // "tracked_symbols.json" under the home folder by default; "-" keeps nothing
-	WebDist        string // the page's build output
+	Page           fs.FS  // the built page (index.html, favicon.svg, assets/); nil: not built
 	Poll           time.Duration
 	// Catalog lists Binance perpetuals for the add-coin search (a 4-second, one-try client by default).
 	Catalog catalog.PerpetualLister
@@ -132,42 +130,43 @@ func fail(w http.ResponseWriter, status int, detail any) {
 // Handler routes every request.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	dist := s.opts.WebDist
+	page := s.opts.Page
+	isFile := func(name string) bool {
+		if page == nil {
+			return false
+		}
+		info, err := fs.Stat(page, name)
+		return err == nil && !info.IsDir()
+	}
 
 	// index.html and favicon.svg are revalidated on every load, so a new build shows on reload
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		index := filepath.Join(dist, "index.html")
-		if info, err := os.Stat(index); err != nil || info.IsDir() {
+		if !isFile("index.html") {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusServiceUnavailable)
 			fmt.Fprint(w, NotBuilt)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeFile(w, r, index)
+		http.ServeFileFS(w, r, page, "index.html")
 	})
 	mux.HandleFunc("GET /favicon.svg", func(w http.ResponseWriter, r *http.Request) {
-		icon := filepath.Join(dist, "favicon.svg")
-		if info, err := os.Stat(icon); err != nil || info.IsDir() {
+		if !isFile("favicon.svg") {
 			fail(w, http.StatusNotFound, "Not Found")
 			return
 		}
 		w.Header().Set("Cache-Control", "no-cache")
-		http.ServeFile(w, r, icon)
+		http.ServeFileFS(w, r, page, "favicon.svg")
 	})
 	// Vite's hashed assets: a changed file gets a new name, so the browser may keep each one for good
-	assets := os.DirFS(filepath.Join(dist, "assets"))
-	files := http.FileServerFS(assets)
 	mux.HandleFunc("GET /assets/{path...}", func(w http.ResponseWriter, r *http.Request) {
-		name := r.PathValue("path")
-		if info, err := fs.Stat(assets, name); err != nil || info.IsDir() {
+		name := "assets/" + r.PathValue("path")
+		if !fs.ValidPath(name) || !isFile(name) {
 			fail(w, http.StatusNotFound, "Not Found")
 			return
 		}
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		r2 := r.Clone(r.Context())
-		r2.URL.Path = "/" + name
-		files.ServeHTTP(w, r2)
+		http.ServeFileFS(w, r, page, name)
 	})
 
 	mux.HandleFunc("GET /api/coins", func(w http.ResponseWriter, r *http.Request) {

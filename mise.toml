@@ -34,8 +34,8 @@ dir = "web"
 run = "npm run dev"
 
 [tasks.build]
-description = "Build the page into web/dist and the Go binary into bin/deltarisk"
-depends = ["build:web", "build:go"]
+description = "Build the page and the Go binary with the page compiled in (bin/deltarisk)"
+depends = ["build:go"]
 
 [tasks."build:web"]
 description = "Build the frontend into web/dist, which the backend serves"
@@ -44,8 +44,9 @@ dir = "web"
 run = "npm run build"
 
 [tasks."build:go"]
-description = "Build the Go binary into bin/deltarisk"
-run = "go build -o bin/deltarisk ./cmd/deltarisk"
+description = "Build the page, then bin/deltarisk with the page compiled in (it serves it on /)"
+depends = ["build:web"]
+run = "go build -tags embedweb -o bin/deltarisk ./cmd/deltarisk"
 
 [tasks.start]
 description = "Build everything and serve the dashboard on 0.0.0.0:8000 (PORT overrides; extra arguments pass through)"

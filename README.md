@@ -182,21 +182,23 @@ installs both toolchains (Go 1.25 and Node 24, pinned in `mise.toml`) and runs t
 mise start
 ```
 
-That builds the page into `web/dist` and the binary into `bin/deltarisk`, then starts the dashboard on
-port 8000 on every network interface: open **http://127.0.0.1:8000** on the same machine, or the
+That builds the page and then `bin/deltarisk` with the page compiled in, so the binary is all you need
+to run or copy elsewhere, and starts the dashboard on port 8000 on every network interface: open **http://127.0.0.1:8000** on the same machine, or the
 machine's IP from elsewhere. The dashboard has no login, so anyone who can reach the port can add and
-remove coins; firewall the port or pass `--host 127.0.0.1` to keep it local. After a build, the binary
-runs on its own:
+remove coins; firewall the port or pass `--host 127.0.0.1` to keep it local. After a build
+(`mise run build`), the binary runs on its own:
 
 ```bash
 bin/deltarisk                        # same as mise start, without the build
 bin/deltarisk --port 8002            # or: PORT=8002 mise start
 bin/deltarisk --host 127.0.0.1       # this machine only
 bin/deltarisk --offline              # simulated random-walk candles, no network
-bin/deltarisk --web-dist path/dist   # serve another build of the page
+bin/deltarisk --web-dist path/dist   # serve another build of the page instead of the compiled-in one
 ```
 
-`deltarisk web` is still accepted and does the same thing; `go run ./cmd/deltarisk` works without a build.
+`deltarisk web` is still accepted and does the same thing. `go run ./cmd/deltarisk` works without a build
+and serves `web/dist` from disk when there is one; a plain `go build` does the same (the page is compiled in
+only with `-tags embedweb`, which `mise run build` passes after building it).
 While working on the page, run both halves with hot reload:
 
 ```bash

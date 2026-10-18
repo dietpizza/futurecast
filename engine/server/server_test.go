@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io/fs"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/coder/websocket"
@@ -45,10 +47,11 @@ func tempHome(t *testing.T) string {
 // app starts an offline dashboard; symbols nil restores the saved watchlist.
 func app(t *testing.T, symbols []string, persist, webDist string) (*Server, *httptest.Server) {
 	t.Helper()
-	if webDist == "" {
-		webDist = filepath.Join(t.TempDir(), "missing")
+	var page fs.FS
+	if webDist != "" {
+		page = os.DirFS(webDist)
 	}
-	s := New(Options{Config: config.Default(), InitialSymbols: symbols, Live: false, PersistPath: persist, WebDist: webDist,
+	s := New(Options{Config: config.Default(), InitialSymbols: symbols, Live: false, PersistPath: persist, Page: page,
 		Catalog: offlineCatalog{}, Poll: time.Hour})
 	s.Start()
 	ts := httptest.NewServer(s.Handler())
@@ -129,6 +132,44 @@ func TestServesTheBuiltPage(t *testing.T) {
 	resp, _ = call(t, "GET", ts.URL+"/favicon.svg", nil)
 	if resp.StatusCode != 200 || resp.Header.Get("Cache-Control") != "no-cache" {
 		t.Fatal(resp.StatusCode, resp.Header)
+	}
+}
+
+// The page compiled into the binary is an fs.FS like this one.
+func TestServesAnEmbeddedPage(t *testing.T) {
+	tempHome(t)
+	page := fstest.MapFS{
+		"index.html":           {Data: []byte(`<title>DeltaRisk</title>`)},
+		"favicon.svg":          {Data: []byte("<svg/>")},
+		"assets/index-abc.js":  {Data: []byte("console.log(1)")},
+		"assets/index-abc.css": {Data: []byte("body{}")},
+	}
+	s := New(Options{Config: config.Default(), InitialSymbols: []string{}, PersistPath: "-", Page: page,
+		Catalog: offlineCatalog{}, Poll: time.Hour})
+	s.Start()
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(func() { ts.Close(); s.Stop() })
+
+	resp, body := call(t, "GET", ts.URL+"/", nil)
+	if resp.StatusCode != 200 || string(body) != "<title>DeltaRisk</title>" || resp.Header.Get("Cache-Control") != "no-cache" ||
+		!strings.HasPrefix(resp.Header.Get("Content-Type"), "text/html") {
+		t.Fatal(resp.StatusCode, resp.Header, string(body))
+	}
+	resp, _ = call(t, "GET", ts.URL+"/assets/index-abc.css", nil)
+	if resp.StatusCode != 200 || !strings.HasPrefix(resp.Header.Get("Content-Type"), "text/css") ||
+		!strings.Contains(resp.Header.Get("Cache-Control"), "immutable") {
+		t.Fatal(resp.StatusCode, resp.Header)
+	}
+	if resp, _ := call(t, "GET", ts.URL+"/favicon.svg", nil); resp.StatusCode != 200 {
+		t.Fatal(resp.StatusCode)
+	}
+	for _, missing := range []string{"/assets/nope.js", "/assets/", "/assets/..%2findex.html", "/index.html"} {
+		if resp, _ := call(t, "GET", ts.URL+missing, nil); resp.StatusCode == 200 {
+			t.Fatal(missing, resp.StatusCode)
+		}
+	}
+	if resp, _ := call(t, "GET", ts.URL+"/api/coins", nil); resp.StatusCode != 200 {
+		t.Fatal("the API still answers", resp.StatusCode)
 	}
 }
 

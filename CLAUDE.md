@@ -17,7 +17,7 @@ Go 1.25 (`go.mod`, module `deltarisk`); the page is Svelte 5 + Tailwind 4 built 
 ```bash
 mise dev                                           # Vite on http://localhost:5000 (hot reload, proxies /api and /ws) + backend on 127.0.0.1:5001
 mise run dev:api -- --offline                      # one half only; DELTARISK_API_PORT / DELTARISK_WEB_PORT change the ports
-mise run build                                     # web/ → web/dist (build:web) and bin/deltarisk (build:go)
+mise run build                                     # web/ → web/dist, then bin/deltarisk with the page compiled in (build:go -tags embedweb)
 mise start                                         # build, then the dashboard on 0.0.0.0:8000 (PORT=8002 mise start)
 mise run check                                     # svelte-check and go vet
 mise run test                                      # go test ./...
@@ -26,7 +26,7 @@ go test ./...                                      # full suite (~20 packages, ~
 go test -race ./...                                # the manager, board and server run goroutines: keep this clean
 go test ./engine/risk -run Parity -v             # one package, by name
 
-go run ./cmd/deltarisk                             # dashboard on 0.0.0.0:8000 (`deltarisk web` is the same)
+go run ./cmd/deltarisk                             # dashboard on 0.0.0.0:8000 (`deltarisk web` is the same; page from web/dist on disk)
 go run ./cmd/deltarisk --host 127.0.0.1 --port 8765 --offline --web-dist <dir>
 
 go run ./cmd/deltarisk risk B-SOL_USDT             # walk-forward check per window and side + today's readings (−5% stop, tier leverage)
@@ -88,7 +88,7 @@ Results (Oct 2026, ETH/SOL/DASH/ZK/BTC): the baseline's coverage was 7–13% in 
 
 ## Frontend
 
-Svelte 5 (runes) + Tailwind 4 in `web/` at the repository root, built by Vite (no SvelteKit, one page). `engine/server` serves `web/dist` (`--web-dist`, `server.Options.WebDist`): `/` is `index.html` with `Cache-Control: no-cache`, `/assets/*` are Vite's hashed files cached as immutable, and without a build `/` answers 503 with how to make one. In development use `mise dev`; the Vite server proxies `/api` and `/ws` to the backend, so the page code always uses same-origin URLs.
+Svelte 5 (runes) + Tailwind 4 in `web/` at the repository root, built by Vite (no SvelteKit, one page). `engine/server` serves the page from an `fs.FS` (`server.Options.Page`). `mise run build` compiles `web/dist` into the binary: the root package `deltarisk` embeds it under the `embedweb` build tag (`page_embed.go`; `page.go` is the untagged stub), because `go:embed` needs the folder to exist and plain `go test` / `go run` must work without a page build. The command serves `--web-dist <dir>` when given, else the compiled-in page, else `web/dist` on disk (`pageToServe`, named in the startup banner): `/` is `index.html` with `Cache-Control: no-cache`, `/assets/*` are Vite's hashed files cached as immutable, and without a build `/` answers 503 with how to make one. In development use `mise dev`; the Vite server proxies `/api` and `/ws` to the backend, so the page code always uses same-origin URLs.
 
 - `src/lib/live.svelte.ts`: the one `$state` object `app` (coins, selected `window`, `stopPct`, open rows `expanded`, connection, catalog, drawer), the REST calls (`updateCoin` for overrides) and the `/ws` stream. The window, stop and sort are saved in `localStorage` (`deltarisk.window`, `deltarisk.stop`, `deltarisk.sort`). Components read it and update on their own; there is no manual re-rendering.
 - `src/lib/risk.ts`: `WINDOWS`, `STOPS`, `TIERS`, `reading` (one side's stop-hit chance for the page's stop: the server's exact number at its own stop, else `exceedChance` over the sent quantiles, a port of `risk.ExceedChance` in `engine/risk`; keep them in sync), score bands (`riskTone`: < 25 low, < 50 middle, else high), labels and tooltip texts, loading states. `src/lib/sort.ts`: watchlist sorting (`sortCoins`, `nextSort`): Pair, Call (Long, Short, Wait), Tier (leverage), Long/Short risk (stop-hit chance at the page's stop; unchecked readings sort last), Momentum, Volatility (percentile), Funding (rate); not Price or State. A head click cycles its first direction (text ascending, numbers descending), the other, then off; the sorted head shows a chevron (down = descending). `src/lib/format.ts`: number formatting. `src/lib/types.ts`: the snapshot fields the page reads (`manager.Snapshot`).
