@@ -36,14 +36,14 @@ breakouts) on history. They are not on the dashboard.
    [ Alignment ]   coin and benchmark on one candle grid per chart
                │
                ▼
-   [ stats.regime ]   momentum, efficiency, volatility percentile, state      (per window)
-   [ stats.risk ]     HAR volatility forecast, LightGBM quantiles, walk-forward
-                      check; trained on load and daily, scored on each close   (per window, side)
-   [ stats.signals ]  funding rate and its percentile
+   [ regime ]    momentum, efficiency, volatility percentile, state      (per window)
+   [ risk ]      HAR volatility forecast and walk-forward check;
+                 trained on load and daily, scored on each close        (per window, side)
+   [ funding ]   funding rate and its percentile
                │
                ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│      READ-ONLY WEB DASHBOARD (FastAPI + WebSocket, port 8000)          │
+│      READ-ONLY WEB DASHBOARD (Go, REST + WebSocket, port 8000)         │
 │                                                                        │
 │  • Strictly NO Private Keys / NO Trading APIs                          │
 │  • Rescored whenever a 5m, 15m or 1h candle closes                     │
@@ -55,34 +55,31 @@ breakouts) on history. They are not on the dashboard.
 ## Risk readings
 
 Windows 5m–1h use 5-minute candles (90 days of history), 2h–4h 15-minute candles (180 days), 8h hourly
-candles (2 years). Everything is computed on closed candles, in `src/deltarisk/stats/risk.py` and
-`stats/regime.py`.
+candles (2 years). Everything is computed on closed candles, in `internal/risk` and
+`internal/regime`.
 
 - **Adverse move:** for a long, how far the lowest low of the next window fell below the entry close;
   for a short, how far the highest high rose above it. Wicks count.
 - **Swing unit:** a HAR volatility forecast (a regression of the next window's high–low volatility on
   the last 1, 4, 24 and 96 windows' volatility). Adverse moves are modelled in units of this forecast,
   so thousands of past windows, calm or wild, say something about today's 0.25% or 3% move.
-- **Models:** the baseline is the forecast times the past distribution of adverse moves in swing units.
-  LightGBM quantile regressions (10–97%) on ~20 inputs (volatility at several lengths, momentum,
-  efficiency, taker flow, range position, time of day and to the next funding, the funding rate and
-  its percentile, the benchmark's volatility) replace it for a window and side only where they cut
-  the out-of-sample pinball loss by at least 2%. Nothing predicts direction: earlier tests found the
-  next move's direction indistinguishable from chance, while its size is predictable because
+- **Model:** the forecast times the past distribution of adverse moves in swing units. (LightGBM
+  quantile regressions on ~20 inputs ran next to it until October 2026; they were dropped because they
+  beat it in only 9 of 96 window-sides, by a few percent.) Nothing predicts direction: earlier tests
+  found the next move's direction indistinguishable from chance, while its size is predictable because
   volatility clusters.
 - **Check:** walk-forward, training on the first 60% of history and testing on four later blocks
   with an 8h gap. The 1-in-10 bad case should be exceeded in about 10% of test windows; outside 7–13%
   the page shows "—" instead of a number. Models are retrained once a day.
 
 ```bash
-uv run deltarisk risk B-SOL_USDT                       # every window, −5% stop, the tier's leverage
-uv run deltarisk risk B-ETH_USDT --window 1h --stop 8 --leverage 10 --calibration
+go run ./cmd/deltarisk risk B-SOL_USDT                  # every window, −5% stop, the tier's leverage
+go run ./cmd/deltarisk risk B-ETH_USDT --window 1h --stop 8 --leverage 10 --calibration
 ```
 
 Results on 17 October 2026 (ETH, SOL, DASH, ZK, BTC; −5% stop at the tier's leverage): the baseline's
 bad case was exceeded in 7–13% of test windows in 77 of 80 window-sides, most of them within 9–11%.
-ZK's shorts at 2h–4h failed (13–15%: it pumped harder than its history said). LightGBM beat the baseline by 2% or more in
-9 of 80, by at most 3.7%. The predicted stop-hit chance matched what happened within about 2 points.
+ZK's shorts at 2h–4h failed (13–15%: it pumped harder than its history said). The predicted stop-hit chance matched what happened within about 2 points.
 At 20× with a −5% margin stop (a 0.25% price move), a BTC, ETH or SOL long or short hits the stop
 within 1h 35–58% of the time.
 
@@ -90,7 +87,7 @@ within 1h 35–58% of the time.
 
 ## Setups
 
-The rules run on a pair of charts: 15-minute entries in 1-hour context by default (`SetupSpec`).
+The rules run on a pair of charts: 15-minute entries in 1-hour context by default (`setups.Spec`).
 
 1. **Context:** the context chart's trend points the trade's way (its latest structure break), and the
    entry chart's pullback reached into a context-chart fair value gap that existed before price got
@@ -108,8 +105,8 @@ breaks and gaps use only candles that have closed.
 ## Backtest
 
 ```bash
-uv run deltarisk backtest B-ETH_USDT                                  # 15m / 1h, 2 years, A+, 3R, 1% risk
-uv run deltarisk backtest B-BTC_USDT --entry 5m --context 1h --days 365 --target 4 --csv trades.csv
+go run ./cmd/deltarisk backtest B-ETH_USDT                             # 15m / 1h, 2 years, A+, 3R, 1% risk
+go run ./cmd/deltarisk backtest B-BTC_USDT --entry 5m --context 1h --days 365 --target 4 --csv trades.csv
 ```
 
 It replays every setup with what its orders really did, as one account: A+ setups only, one at a time
@@ -145,8 +142,8 @@ has no clear edge, and none of these results is large enough to trust over 170�
 ### Wedge breakouts (second strategy, backtest only)
 
 ```bash
-uv run deltarisk backtest B-ETH_USDT --strategy wedge                 # 1h, 2 years, A+, 2R, 1% risk, at most 5x
-uv run deltarisk backtest B-SOL_USDT --strategy wedge --entry 4h --days 2190 --target measured --grade all
+go run ./cmd/deltarisk backtest B-ETH_USDT --strategy wedge            # 1h, 2 years, A+, 2R, 1% risk, at most 5x
+go run ./cmd/deltarisk backtest B-SOL_USDT --strategy wedge --entry 4h --days 2190 --target measured --grade all
 ```
 
 A second rule set on a single chart, not shown on the dashboard. A wedge is two converging lines, one
@@ -178,28 +175,29 @@ edge either.
 
 ## Running the Dashboard
 
-```bash
-./run.sh
-```
-
-That starts the dashboard on port 8000 on every network interface: open **http://127.0.0.1:8000**
-on the same machine, or the machine's IP from elsewhere. The dashboard has no login, so anyone who
-can reach the port can add and remove coins; firewall the port or pass `--host 127.0.0.1`
-to keep it local. `./run.sh` is a thin wrapper around the `deltarisk` command, so these are
-equivalent:
+The backend is a Go program and the page a Svelte + Tailwind app in `web/`. [mise](https://mise.jdx.dev)
+installs both toolchains (Go 1.25 and Node 24, pinned in `mise.toml`) and runs the tasks:
 
 ```bash
-uv run deltarisk                    # same as ./run.sh
-uv run deltarisk --port 8002        # or: PORT=8002 ./run.sh
-uv run deltarisk --host 127.0.0.1   # this machine only
-uv run deltarisk --offline          # simulated random-walk candles, no network
+mise start
 ```
 
-`deltarisk web` is still accepted and does the same thing.
+That builds the page into `web/dist` and the binary into `bin/deltarisk`, then starts the dashboard on
+port 8000 on every network interface: open **http://127.0.0.1:8000** on the same machine, or the
+machine's IP from elsewhere. The dashboard has no login, so anyone who can reach the port can add and
+remove coins; firewall the port or pass `--host 127.0.0.1` to keep it local. After a build, the binary
+runs on its own:
 
-The page itself is a Svelte + Tailwind app in `web/`, which needs Node (24, pinned in `mise.toml`).
-`./run.sh` builds it into `web/dist` the first time; after changing it, rebuild with `mise run build`.
-While working on it, run both halves with hot reload:
+```bash
+bin/deltarisk                        # same as mise start, without the build
+bin/deltarisk --port 8002            # or: PORT=8002 mise start
+bin/deltarisk --host 127.0.0.1       # this machine only
+bin/deltarisk --offline              # simulated random-walk candles, no network
+bin/deltarisk --web-dist path/dist   # serve another build of the page
+```
+
+`deltarisk web` is still accepted and does the same thing; `go run ./cmd/deltarisk` works without a build.
+While working on the page, run both halves with hot reload:
 
 ```bash
 mise dev            # page on http://localhost:5000, backend on 127.0.0.1:5001
@@ -207,9 +205,9 @@ mise tasks          # build, check, test, dev:api, dev:web, start, install
 ```
 
 In the dashboard, add any CoinDCX futures pair (e.g. `B-DOGE_USDT`, `B-SOL_USDT`). A new coin's
-history downloads in the background and its models train (a few seconds a coin); the next coin
-downloads while the previous one trains (the row shows the progress). After a restart within a day,
-cached candles and saved models make every coin ready in seconds; from then on each candle is appended as it closes and the readings are
+history downloads in the background and its models train (about a second a coin); the next coin
+downloads while the previous one trains (the row shows the progress). After a restart, cached candles
+make every coin ready in seconds; from then on each candle is appended as it closes and the readings are
 rescored. Pick the window and your stop at the top; open a row for every window and to change the
 coin's tier or leverage. All market data comes from the Binance perpetual
 behind the pair (`B-SOL_USDT` → `SOLUSDT`, `B-1000PEPE_USDT` → `1000PEPEUSDT`, INR pairs → their
@@ -225,11 +223,10 @@ Everything the app keeps lives in `~/.deltarisk` (set `DELTARISK_HOME` to use an
 | `tracked_symbols.json` | Coins on the dashboard, with any tier or leverage you set |
 | `cache/candles/` | Downloaded closed candles, so restarts and backtests only fetch new ones |
 | `cache/funding/` | Downloaded funding rates, likewise |
-| `cache/risk/` | Trained risk models per coin; a restart within a day reuses them instead of training again |
 | `config/assets.yaml` | Optional overrides of the defaults shown in this repo's `config/` |
 
-Older versions also kept `models/` and `logs/forecasts/` there; nothing reads them any more, so they
-can be deleted.
+Older versions also kept `models/`, `logs/forecasts/` and `cache/risk/` there; nothing reads them any more, so
+they can be deleted.
 
 ---
 
@@ -252,5 +249,6 @@ A coin is never its own benchmark.
 
 ### Run the Test Suite
 ```bash
-uv run pytest -v
+mise run test       # go test ./...
+mise run check      # svelte-check and go vet
 ```

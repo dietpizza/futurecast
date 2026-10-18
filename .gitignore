@@ -1,22 +1,17 @@
-# Python-generated files
+# Python (until the Python code is deleted, GO-REWRITE-PLAN.md phase 9)
 __pycache__/
 *.py[oc]
 build/
-dist/
 wheels/
 *.egg-info
-
-# Virtual environments
 .venv
 .pytest_cache/
+
+# Build output: the page (web/dist) and the Go binary
+dist/
+bin/
 
 # Data and logs (generated at runtime)
 data/
 logs/
-models/*.txt
-models/*.json
-models/*.cbm
-models/*.joblib
 .cache/
-catboost_info/
-

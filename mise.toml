@@ -8,9 +8,9 @@ DELTARISK_WEB_PORT = "{{ get_env(name='DELTARISK_WEB_PORT', default='5000') }}"
 DELTARISK_API_PORT = "{{ get_env(name='DELTARISK_API_PORT', default='5001') }}"
 
 [tasks.install]
-description = "Install the Python and frontend dependencies"
+description = "Download the Go modules and the frontend's npm packages"
 depends = ["install:web"]
-run = "uv sync"
+run = "go mod download"
 
 [tasks."install:web"]
 description = "Install the frontend's npm packages (skipped while package-lock.json is unchanged)"
@@ -24,8 +24,8 @@ description = "Svelte dev server on http://localhost:5000 (hot reload) and the b
 depends = ["dev:api", "dev:web"]
 
 [tasks."dev:api"]
-description = "FastAPI backend only (extra arguments pass through, e.g. --offline)"
-run = "uv run deltarisk --host 127.0.0.1 --port $DELTARISK_API_PORT"
+description = "Go backend only (extra arguments pass through, e.g. --offline)"
+run = "go run ./cmd/deltarisk --host 127.0.0.1 --port $DELTARISK_API_PORT"
 
 [tasks."dev:web"]
 description = "Svelte dev server only, proxying /api and /ws to the backend"
@@ -34,22 +34,29 @@ dir = "web"
 run = "npm run dev"
 
 [tasks.build]
+description = "Build the page into web/dist and the Go binary into bin/deltarisk"
+depends = ["build:web", "build:go"]
+
+[tasks."build:web"]
 description = "Build the frontend into web/dist, which the backend serves"
 depends = ["install:web"]
 dir = "web"
 run = "npm run build"
 
+[tasks."build:go"]
+description = "Build the Go binary into bin/deltarisk"
+run = "go build -o bin/deltarisk ./cmd/deltarisk"
+
 [tasks.start]
-description = "Build the frontend and serve the dashboard on :8000 like ./run.sh"
+description = "Build everything and serve the dashboard on 0.0.0.0:8000 (PORT overrides; extra arguments pass through)"
 depends = ["build"]
-run = "./run.sh"
+run = "bin/deltarisk --host 0.0.0.0 --port ${PORT:-8000}"
 
 [tasks.check]
-description = "Type-check the frontend"
+description = "Type-check the frontend and vet the Go code"
 depends = ["install:web"]
-dir = "web"
-run = "npm run check"
+run = ["cd web && npm run check", "go vet ./..."]
 
 [tasks.test]
-description = "Python test suite"
-run = "uv run pytest -q"
+description = "Go test suite"
+run = "go test ./..."

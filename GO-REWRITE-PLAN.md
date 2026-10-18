@@ -9,7 +9,9 @@ Phase 4 done 2026-10-18: `internal/setups` (structure, gaps, setups, outcomes, `
 and `cmd/deltarisk backtest`; live reports and CSVs are identical to Python's.
 Phase 5 done 2026-10-19: `internal/manager`, `board`, `server` and the dashboard command (`deltarisk`, `deltarisk web`,
 `--host/--port/--offline/--web-dist`). The model cache is gone, so a restart retrains (about a second a coin).
-Phase 6 done 2026-10-19: the page no longer reads `model`; the risk tooltip ends with the check's coverage instead. Read `CLAUDE.md` first; this file only says what
+Phase 6 done 2026-10-19: the page no longer reads `model`; the risk tooltip ends with the check's coverage instead.
+Phase 7 done 2026-10-19: mise tasks for Go, `CLAUDE.md` and `README.md` rewritten. `run.sh` was already gone; the
+Python entries stay in `.gitignore` until phase 9 (dropping them while `.venv` exists would show it as untracked). Read `CLAUDE.md` first; this file only says what
 changes and in what order.
 
 ## Goal

@@ -1,5 +1,8 @@
 # Plan: intraday risk scores, momentum and market state
 
+> **2026-10-19:** LightGBM was removed with the Go rewrite (`GO-REWRITE-PLAN.md`): every window and side now uses the HAR
+> baseline. The LightGBM parts below are history.
+
 Agreed with the user on 2026-10-17 in chat and implemented the same day (all six steps). The user's answers: the stop is on margin; the tier rule as proposed; the risk score is the stop-hit chance (see below). This replaces the momentum statistics
 dashboard (event study, variance ratio, "next after similar") with a risk view for intraday trading of
 crypto futures. It brings a model back on purpose: the user asked for predictive risk analysis and for a
