@@ -2,6 +2,8 @@
   // A dropdown in the page's own style instead of the browser's: a square field with a chevron, and a
   // menu whose current option sits on a soft cyan wash. Closes on a choice, a click
   // outside, Escape or Tab. Keys: Enter / Space / ↓ open; ↑ ↓ move; Enter picks; Home / End jump.
+  // The menu is position: fixed at the field's place on screen, so a parent's overflow (the open
+  // coin card clips) can't cut it off; it opens upwards when there is no room below.
   import { tick } from "svelte";
   import Icon from "./Icon.svelte";
 
@@ -13,6 +15,7 @@
   let active = $state(0); // the option the keyboard is on
   let root: HTMLDivElement;
   let menu: HTMLUListElement | undefined = $state();
+  let place = $state(""); // the menu's inline position
   const id = `dd-${Math.random().toString(36).slice(2, 8)}`;
   const current = $derived(options.find((o) => o.value === value) ?? options[0]);
 
@@ -20,11 +23,24 @@
     active = Math.max(0, options.findIndex((o) => o.value === value));
     open = true;
     await tick();
+    position();
     menu?.focus();
+  }
+
+  // Under the field, or above it when the menu wouldn't fit below
+  function position(): void {
+    if (!open || !menu) return;
+    const field = root.getBoundingClientRect();
+    const height = menu.offsetHeight;
+    const below = window.innerHeight - field.bottom - 4;
+    const up = height > below && field.top - 4 > below;
+    const vertical = up ? `bottom: ${window.innerHeight - field.top + 4}px` : `top: ${field.bottom + 4}px`;
+    place = `${vertical}; left: ${field.left}px; min-width: ${field.width}px`;
   }
 
   function hide(refocus = true): void {
     open = false;
+    place = "";
     if (refocus) root.querySelector<HTMLButtonElement>("button")?.focus();
   }
 
@@ -70,7 +86,7 @@
   }
 </script>
 
-<svelte:window onpointerdown={onWindowPointer} />
+<svelte:window onpointerdown={onWindowPointer} onresize={position} onscrollcapture={position} />
 
 <div class="relative {cls}" bind:this={root}>
   <button
@@ -92,6 +108,7 @@
       bind:this={menu}
       id={id}
       class="dd-menu"
+      style={place || "visibility: hidden"}
       role="listbox"
       tabindex="-1"
       aria-label={label}
@@ -148,11 +165,8 @@
 
   /* The menu: a framed panel with the HUD's top accent line, options like the window selector's */
   .dd-menu {
-    position: absolute;
-    z-index: 30;
-    top: calc(100% + 4px);
-    left: 0;
-    min-width: 100%;
+    position: fixed;
+    z-index: 60;
     border: 1px solid var(--rule);
     background: var(--surface-raised);
     box-shadow: var(--shadow-lg), inset 0 2px 0 var(--accent);
