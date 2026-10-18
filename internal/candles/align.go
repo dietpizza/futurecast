@@ -249,3 +249,13 @@ func (c *Chart) After(t int64) Chart {
 	i := sort.Search(len(c.OpenTime), func(k int) bool { return c.OpenTime[k] > t })
 	return c.slice(i, len(c.OpenTime))
 }
+
+// Concat is the chart followed by another with the same columns (later candles).
+func (c *Chart) Concat(other *Chart) Chart {
+	out := Chart{StepMs: c.StepMs, Names: c.Names, Columns: make(map[string][]float64, len(c.Columns))}
+	out.OpenTime = append(append([]int64(nil), c.OpenTime...), other.OpenTime...)
+	for name, col := range c.Columns {
+		out.Columns[name] = append(append([]float64(nil), col...), other.Columns[name]...)
+	}
+	return out
+}
