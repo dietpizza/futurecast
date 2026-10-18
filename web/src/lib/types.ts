@@ -1,4 +1,4 @@
-// The parts of the server's coin snapshot the page reads (SymbolWorker.snapshot in multi_manager.py).
+// The parts of the server's coin snapshot the page reads (manager.Snapshot in internal/manager/worker.go).
 // Readings are null or missing when the history can't support them.
 
 export type WindowName = "5m" | "15m" | "30m" | "1h" | "2h" | "3h" | "4h" | "8h";
@@ -6,7 +6,6 @@ export type Side = "long" | "short";
 export type Tier = "megacap" | "altcoin" | "shitcoin";
 
 export interface SideRisk {
-  model: "har" | "lgbm";
   checked: boolean; // passed the walk-forward check (bad case exceeded in 7–13% of test windows)
   coverage: number | null; // share of test windows worse than the bad case
   bad_case_pct: number; // 1-in-10 adverse move within the window, price %
@@ -24,7 +23,7 @@ export interface TrendOutcome {
   mean_pct: number | null; // mean move the call's way over the next window, before fees
 }
 
-// What followed past trending readings on this coin (regime.trend_record), behind the Long / Short call
+// What followed past trending readings on this coin (regime.ComputeTrendRecord), behind the Long / Short call
 export interface TrendRecord {
   long: TrendOutcome;
   short: TrendOutcome;
@@ -95,7 +94,7 @@ export interface CatalogItem {
   coindcx_url: string;
 }
 
-// The add-pair drawer's market board (GET /api/market, publisher/market_board.py)
+// The add-pair drawer's market board (GET /api/market, internal/board)
 export type BoardWindow = "5m" | "15m" | "1h" | "4h" | "24h";
 
 export interface MarketCoin {

@@ -1,5 +1,5 @@
 // The risk readings in words and numbers: the stop-hit chance for the page's stop, the labels, and the
-// loading states. The math mirrors stats/risk.py; keep the two in sync.
+// loading states. The math mirrors internal/risk; keep the two in sync.
 
 import { formatNumber, isNum, pct, pctile, sp } from "./format";
 import type { Coin, Side, SideRisk, Tier, WindowName, WindowRisk } from "./types";
@@ -27,7 +27,7 @@ export function windowOf(coin: Coin, name: WindowName): WindowRisk | null {
 }
 
 // P(adverse move ≥ x) from quantiles (ascending): linear from (0, 0) through them, an exponential
-// tail through the last two beyond the last (stats.risk.exceed_chance).
+// tail through the last two beyond the last (risk.ExceedChance in internal/risk).
 export function exceedChance(alphas: number[], moves: number[], x: number): number {
   const n = moves.length;
   if (!n) return NaN;
@@ -83,8 +83,8 @@ export function riskText(coin: Coin, w: WindowRisk, r: Reading, name: WindowName
     `Bad case (1 in 10): ${formatNumber(r.risk.bad_case_pct, 2)}% against you, ${formatNumber(r.risk.bad_case_margin_pct, 1)}% of margin.`,
     `Liquidation: ${chanceText(r.risk.liquidation_chance)}.`,
     `Why: ${r.risk.reason}.`,
-    `Model: ${r.risk.model === "lgbm" ? "LightGBM" : "volatility baseline (HAR)"}${isNum(r.risk.coverage) ? ` · bad case exceeded in ${pct(r.risk.coverage, 1)} of test windows` : ""}.`,
   ];
+  if (isNum(r.risk.coverage)) lines.push(`Check: bad case exceeded in ${pct(r.risk.coverage, 1)} of test windows.`);
   return lines.join("\n");
 }
 

@@ -80,7 +80,7 @@
           </div>
           <div>
             <dt class="flex items-center gap-2 text-[15px] font-semibold text-fg"><span class="term-badge">Model</span> Where the numbers come from</dt>
-            <dd class="mt-[3px] text-sm leading-[1.55] text-dim">Swings come in clusters: a wild hour is usually followed by another. A volatility forecast (HAR) scales thousands of past windows of the coin to today's conditions. A LightGBM model is used instead only where it beat that forecast by 2% on data it had not seen. Models retrain once a day.</dd>
+            <dd class="mt-[3px] text-sm leading-[1.55] text-dim">Swings come in clusters: a wild hour is usually followed by another. A volatility forecast (HAR) scales thousands of past windows of the coin to today's conditions. Models retrain once a day.</dd>
           </div>
           <div>
             <dt class="flex items-center gap-2 text-[15px] font-semibold text-fg"><span class="term-badge">Check</span> The honesty check</dt>

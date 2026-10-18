@@ -8,7 +8,8 @@ ending 2026-10-17 20:00 UTC, 10.5 MB; `internal/testdata/parity/inputs.json` has
 Phase 4 done 2026-10-18: `internal/setups` (structure, gaps, setups, outcomes, `ResolveTrade`), `wedges`, `backtest`
 and `cmd/deltarisk backtest`; live reports and CSVs are identical to Python's.
 Phase 5 done 2026-10-19: `internal/manager`, `board`, `server` and the dashboard command (`deltarisk`, `deltarisk web`,
-`--host/--port/--offline/--web-dist`). The model cache is gone, so a restart retrains (about a second a coin). Read `CLAUDE.md` first; this file only says what
+`--host/--port/--offline/--web-dist`). The model cache is gone, so a restart retrains (about a second a coin).
+Phase 6 done 2026-10-19: the page no longer reads `model`; the risk tooltip ends with the check's coverage instead. Read `CLAUDE.md` first; this file only says what
 changes and in what order.
 
 ## Goal
