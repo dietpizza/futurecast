@@ -11,7 +11,12 @@ Phase 5 done 2026-10-19: `internal/manager`, `board`, `server` and the dashboard
 `--host/--port/--offline/--web-dist`). The model cache is gone, so a restart retrains (about a second a coin).
 Phase 6 done 2026-10-19: the page no longer reads `model`; the risk tooltip ends with the check's coverage instead.
 Phase 7 done 2026-10-19: mise tasks for Go, `CLAUDE.md` and `README.md` rewritten. `run.sh` was already gone; the
-Python entries stay in `.gitignore` until phase 9 (dropping them while `.venv` exists would show it as untracked). Read `CLAUDE.md` first; this file only says what
+Python entries stay in `.gitignore` until phase 9 (dropping them while `.venv` exists would show it as untracked).
+Phase 8 done 2026-10-19 (the user's cache was gone, so the caches came from a fresh download): Python and Go dashboards
+on copies of one cache with BTC, ETH, SOL and ZK matched in all 6,428 numbers of 32 windows (largest relative
+difference 9e-12; 10 LightGBM sides left out), with the same keys and nulls; `deltarisk risk` matched in every HAR
+column on BTC, SOL and ZK; the page on the Go server worked through window and stop changes, adding from the drawer,
+reload, a leverage override and removal. Go now writes cache files 0644 like pyarrow did (it wrote 0600). Read `CLAUDE.md` first; this file only says what
 changes and in what order.
 
 ## Goal

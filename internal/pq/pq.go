@@ -229,6 +229,10 @@ func Write(path string, cols []Column, meta map[string]string) error {
 		return err
 	}
 	defer os.Remove(tmp.Name()) // no-op once renamed
+	if err := tmp.Chmod(0o644); err != nil { // CreateTemp makes 0600; the caches were 0644 under Python
+		tmp.Close()
+		return err
+	}
 	props := parquet.NewWriterProperties(parquet.WithCompression(compress.Codecs.Zstd))
 	w, err := pqarrow.NewFileWriter(schema, tmp, props, pqarrow.NewArrowWriterProperties(pqarrow.WithStoreSchema()))
 	if err != nil {

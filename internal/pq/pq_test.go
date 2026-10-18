@@ -2,6 +2,7 @@ package pq
 
 import (
 	"math"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -15,6 +16,9 @@ func TestWriteAndRead(t *testing.T) {
 	}
 	if err := Write(path, cols, map[string]string{"covered_from": "7"}); err != nil {
 		t.Fatal(err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o644 {
+		t.Fatal("file mode", info.Mode(), err)
 	}
 	tbl, err := Read(path)
 	if err != nil {
