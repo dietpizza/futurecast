@@ -20,7 +20,7 @@ func main() {
 			return errors.New("the dashboard isn't ported to Go yet (GO-REWRITE-PLAN.md phase 5): run it with `uv run deltarisk`")
 		},
 	}
-	root.AddCommand(riskCommand())
+	root.AddCommand(riskCommand(), backtestCommand())
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)

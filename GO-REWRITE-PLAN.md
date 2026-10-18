@@ -4,7 +4,9 @@ Written 2026-10-18 at the user's request. Phase 0 done 2026-10-18 (fixtures: ETH
 ending 2026-10-17 20:00 UTC, 10.5 MB; `internal/testdata/parity/inputs.json` has the spans). Phases 1–2 done 2026-10-18; phase 2 added
 `internal/pq` (the Parquet reader/writer behind the caches and the parity tests) and `internal/binance/binancetest`
 (the fake Binance server and clock). Phase 3 done 2026-10-18: `internal/series`, `regime`, `funding`, `risk`,
-`jsonx` (NaN/label/timestamp JSON), `history` (chart sizes, cached client, aligned downloads) and `cmd/deltarisk risk`. Read `CLAUDE.md` first; this file only says what
+`jsonx` (NaN/label/timestamp JSON), `history` (chart sizes, cached client, aligned downloads) and `cmd/deltarisk risk`.
+Phase 4 done 2026-10-18: `internal/setups` (structure, gaps, setups, outcomes, `ResolveTrade`), `wedges`, `backtest`
+and `cmd/deltarisk backtest`; live reports and CSVs are identical to Python's. Read `CLAUDE.md` first; this file only says what
 changes and in what order.
 
 ## Goal

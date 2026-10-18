@@ -391,10 +391,15 @@ func RollingRankPct(x []float64, n, minPeriods int) []float64 {
 	return out
 }
 
-// EWMMean is x.ewm(span=span, adjust=False).mean(): α = 2 / (span + 1), seeded with the first
-// value, computed as pandas does (from the centre of mass, normalising by the weights each step).
-func EWMMean(x []float64, span float64) []float64 {
-	com := (span - 1) / 2
+// EWMMean is x.ewm(span=span, adjust=False).mean(): α = 2 / (span + 1).
+func EWMMean(x []float64, span float64) []float64 { return EWMMeanCom(x, (span-1)/2) }
+
+// EWMMeanAlpha is x.ewm(alpha=alpha, adjust=False).mean() (pandas turns α into a centre of mass).
+func EWMMeanAlpha(x []float64, alpha float64) []float64 { return EWMMeanCom(x, (1-alpha)/alpha) }
+
+// EWMMeanCom is x.ewm(com=com, adjust=False).mean(), seeded with the first value, computed as
+// pandas does (α = 1 / (1 + com), normalising by the weights each step).
+func EWMMeanCom(x []float64, com float64) []float64 {
 	alpha := 1 / (1 + com)
 	oldFactor, newWt := 1-alpha, alpha
 	out := NaNs(len(x))
